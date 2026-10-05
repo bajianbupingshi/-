@@ -1,0 +1,31 @@
+# ★ 为什么必须有这个文件：
+#   本机（Windows）core.autocrlf 是打开的。没有 .gitattributes 时，签出会把 .sh / .cpp
+#   等全部变成 CRLF —— 而 .sh 带 CRLF 在 Linux 上会直接报
+#       bash: ./x.sh: /bin/bash^M: bad interpreter: No such file or directory
+#   这个项目要在 WSL/Linux 与 GitHub Actions 上跑，所以文本文件必须在仓库里就是 LF。
+#
+# 规则：仓库内一律 LF，签出也用 LF（覆盖 autocrlf）。
+* text=auto eol=lf
+
+# Windows 批处理反而需要 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制：不做换行转换，也不做 diff
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.ico  binary
+*.zip  binary
+*.gz   binary
+*.tgz  binary
+*.pdf  binary
+*.a    binary
+*.so   binary
+*.dll  binary
+*.exe  binary
+*.db   binary
+
+# 让 GitHub 的语言统计不要把这些算进去
+tools/*.sh linguist-detectable=false
+docs/*.md  linguist-detectable=false

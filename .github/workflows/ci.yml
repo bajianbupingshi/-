@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # ── 常规构建 + 全部测试 ────────────────────────────────────────────────────
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [wsl-debug, wsl-release]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装工具链
+        # libpaho-mqtt-dev 是 MQTT 端到端测试需要的（preset 里 GW_WITH_MQTT=ON）；
+        # asio 由 CMake FetchContent 拉取，所以 git 必需。
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ git libgtest-dev libpaho-mqtt-dev
+
+      - name: 配置
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: 构建
+        run: cmake --build --preset ${{ matrix.preset }} -j"$(nproc)"
+
+      # ★ 先核对测试清单条数：enable_testing() 若晚于 add_test，测试会被**静默丢弃**，
+      #   「ctest 通过」并不等于「测试都登记了」。这一步是防那个坑的。
+      - name: 核对 ctest 清单
+        run: |
+          ctest --preset ${{ matrix.preset }} -N | tail -12
+          n=$(ctest --preset ${{ matrix.preset }} -N | grep -cE '^\s+Test #')
+          echo "登记测试数: $n"
+          if [ "$n" -lt 8 ]; then echo "::error::预期至少 8 个测试，实际 $n"; exit 1; fi
+
+      - name: 全部测试
+        run: ctest --preset ${{ matrix.preset }}
+
+  # ── Sanitizer：只跑纯逻辑测试 ──────────────────────────────────────────────
+  # 不在 ASan 下跑网络相关测试：Paho / asio 这类第三方库在 sanitizer 下会有噪声，
+  # 那会让「零告警」这个结论失去意义。核心逻辑（协议/可靠性/设备模型）用 ASan 验就够了。
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装工具链
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ git libgtest-dev libpaho-mqtt-dev
+
+      - name: 配置（ASan + UBSan）
+        run: cmake --preset wsl-asan
+
+      - name: 构建
+        run: cmake --build --preset wsl-asan -j"$(nproc)"
+
+      - name: 纯逻辑测试（ASan/UBSan 零告警）
+        run: ctest --preset wsl-asan -R "gw_tests"

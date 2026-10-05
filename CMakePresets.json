@@ -1,0 +1,92 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 16, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "host-mingw",
+      "displayName": "Windows host / MinGW g++（仅供本机快速自检）",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-host",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "GW_FETCH_DEPS": "OFF",
+        "GW_WERROR": "ON"
+      }
+    },
+    {
+      "name": "wsl-debug",
+      "displayName": "WSL / Linux Debug（GoogleTest 走系统包）",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "GW_FETCH_DEPS": "ON",
+        "GW_BUILD_SIM": "ON",
+        "GW_BUILD_DRIVER": "ON",
+        "GW_WITH_MQTT": "ON",
+        "GW_WERROR": "ON"
+      }
+    },
+    {
+      "name": "wsl-release",
+      "displayName": "WSL / Linux Release -O2（压测与演示用）",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-rel",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O2 -DNDEBUG",
+        "GW_FETCH_DEPS": "ON",
+        "GW_BUILD_SIM": "ON",
+        "GW_BUILD_DRIVER": "ON",
+        "GW_WITH_MQTT": "ON",
+        "GW_WERROR": "ON"
+      }
+    },
+    {
+      "name": "wsl-tsan",
+      "displayName": "WSL / ThreadSanitizer（多线程竞态检查）",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-tsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -g -O1",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
+        "GW_FETCH_DEPS": "ON",
+        "GW_BUILD_SIM": "ON",
+        "GW_BUILD_DRIVER": "ON",
+        "GW_WITH_MQTT": "ON",
+        "GW_WERROR": "ON"
+      }
+    },
+    {
+      "name": "wsl-asan",
+      "displayName": "WSL / AddressSanitizer（内存错误检查）",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -g -O1",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
+        "GW_FETCH_DEPS": "ON",
+        "GW_BUILD_SIM": "ON",
+        "GW_BUILD_DRIVER": "ON",
+        "GW_WITH_MQTT": "ON",
+        "GW_WERROR": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "host-mingw", "configurePreset": "host-mingw" },
+    { "name": "wsl-debug",  "configurePreset": "wsl-debug" },
+    { "name": "wsl-release","configurePreset": "wsl-release" },
+    { "name": "wsl-tsan",   "configurePreset": "wsl-tsan" },
+    { "name": "wsl-asan",   "configurePreset": "wsl-asan" }
+  ],
+  "testPresets": [
+    { "name": "host-mingw", "configurePreset": "host-mingw", "output": { "outputOnFailure": true } },
+    { "name": "wsl-debug",  "configurePreset": "wsl-debug",  "output": { "outputOnFailure": true } },
+    { "name": "wsl-release","configurePreset": "wsl-release","output": { "outputOnFailure": true } },
+    { "name": "wsl-tsan",   "configurePreset": "wsl-tsan",   "output": { "outputOnFailure": true } },
+    { "name": "wsl-asan",   "configurePreset": "wsl-asan",   "output": { "outputOnFailure": true } }
+  ]
+}

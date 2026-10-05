@@ -1,0 +1,27 @@
+# 构建产物
+build/
+build-*/
+*.o
+*.a
+*.so
+*.dll
+*.exe
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+.cache/
+
+# 构建与自检日志（build_host.sh / bootstrap_wsl.sh 的产物）
+*.log
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 运行期产物
+logs/
+*.db
+*.db-wal
+*.db-shm
