@@ -14,7 +14,7 @@
 | W2 自研件② | Neuron 驱动插件（薄 C 描述符 + C++ 逻辑 + SDK 垫片 + 「假 Neuron」自检） | ✅ 实测（本机垫片路线） |
 | W2 传输层 | 真实 MQTT（Paho C 同步 API）+ 断网续传跑在真网络上 + 批量打包 | ✅ 实测 |
 | D3 Quick Start | 整条链路 REST 化脚本 | ⏳ 脚本已就绪，**未在 WSL 实跑** |
-| D7 | 打 git tag / 建仓 | ⏳ 见文末（等确定提交身份） |
+| D7 | 建仓 + 首次提交 + 打里程碑 tag | ✅ 完成（`3e40760`，tag `v0.1.0`，63 文件 / 9846 行） |
 
 ## 二、可直接引用的实测数字
 
@@ -90,7 +90,29 @@ g++ / clang++、Windows(MinGW) / Linux(GCC 13)、`-O0` / `-O2`。
 | Async API 改造 | R9 待决策 | 若冲 100ms 周期大规模档位 |
 | 压测报告（图表） | 依赖压测矩阵跑完 | W5 |
 
-## 六、复现命令
+## 六、仓库状态
+
+| 项 | 值 |
+| -- | -- |
+| 首次提交 | `3e40760` — 63 文件 / 9846 行插入 |
+| 里程碑标签 | `v0.1.0`（annotated，指向 `3e40760`） |
+| 分支 | `main` |
+| 仓库体积 | `.git` 253 KB（**无构建产物**：`build*` / `*.o` / `*.log` / `CMakeCache` 全部被忽略） |
+| 换行 | `.gitattributes` 强制全文 LF —— 否则签出的 `.sh` 在 WSL 上会 `bad interpreter` |
+| 代码构成 | 23 `.cpp` / 13 `.h` / 10 `CMakeLists.txt` / 7 `.sh` / 5 `.md` / 1 `.yml` / 1 `.json` |
+
+推送：
+
+```bash
+git remote add origin <你的仓库地址>
+git push -u origin main --tags
+```
+
+> 首次提交的 identity 是通过 `tools/first_commit.sh` 以**仓库级**配置写入的（不动全局）。
+> 原因：本机全局 git 身份是 `Migration Agent <automation@example.com>`（自动化占位值），
+> 用它提交会污染 GitHub 的贡献者图。
+
+## 七、复现命令
 
 ```bash
 # 本机（Windows）：双编译器 + 全部自检（含模拟器/MQTT/客户端/插件）
