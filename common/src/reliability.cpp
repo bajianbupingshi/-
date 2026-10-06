@@ -79,13 +79,14 @@ void RecordStore::expire(std::uint64_t now_ms) {
 }
 
 // ── BackfillController ──────────────────────────────────────────────────────
-BackfillController::BackfillController(RecordStore& store, ITransport& transport, IClock& clock,
-                                       BackfillConfig config)
+BackfillController::BackfillController(IRecordStore& store, ITransport& transport, IClock& clock,
+                                       BackfillConfig config, std::uint64_t seq_start)
     : store_(store),
       transport_(transport),
       clock_(clock),
       cfg_(config),
-      backoff_ms_(config.backoff_initial_ms) {}
+      backoff_ms_(config.backoff_initial_ms),
+      seq_(seq_start) {}
 
 void BackfillController::enter_backfill() {
     const std::uint64_t now = clock_.now_ms();
@@ -188,9 +189,10 @@ void BackfillController::on_tick() {
 }
 
 // ── DataProxy ───────────────────────────────────────────────────────────────
-DataProxy::DataProxy(RecordStore& store, ITransport& transport, IClock& clock, ProxyConfig config)
+DataProxy::DataProxy(IRecordStore& store, ITransport& transport, IClock& clock,
+                     ProxyConfig config, std::uint64_t seq_start)
     : store_(store),
-      ctrl_(store, transport, clock, config.backfill),
+      ctrl_(store, transport, clock, config.backfill, seq_start),
       clock_(clock),
       cfg_(config) {}
 

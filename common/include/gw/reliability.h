@@ -115,34 +115,75 @@ private:
 //
 // 语义要点：**只保存「未被对端确认」的记录**，ack(seq) 表达「seq 及之前都已确认」。
 // 因此 ack 之后才允许回收 —— 这样「按 seq 顺序重放」天然成立。
-class RecordStore {
+//
+// W3 起有了第二个实现（SQLite 持久化版，store/ 目录）—— 接口先于实现抽出：
+// 控制器与代理只认 IRecordStore，内存版（进程内）与 SQLite 版（断电续传）
+// 可互换，行为契约由同一组单测钉住。
+class IRecordStore {
 public:
-    RecordStore(std::size_t capacity, std::uint64_t ttl_ms);
+    virtual ~IRecordStore() = default;
 
     // 落库。返回 false 表示**因容量上限被丢弃**（dropped 计数 +1，这是真实数据丢失）
-    bool push(const Record& rec);
+    virtual bool push(const Record& rec) = 0;
 
     // 对端已确认 seq 及之前的全部记录
-    void ack(std::uint64_t seq);
+    virtual void ack(std::uint64_t seq) = 0;
 
     // TTL 清理：移除超过 TTL 仍未确认的记录并计入 expired。
     // 已确认的早就被 ack() 回收了，所以这里清掉的基本都是「断网太久、再不发就过期」的数据。
     // ⇒ 「断网时长必须小于 TTL」是设计约束：TTL 设小了就一定会丢数据，而且对账器会报出来。
-    void expire(std::uint64_t now_ms);
+    virtual void expire(std::uint64_t now_ms) = 0;
 
-    std::size_t size() const noexcept { return queue_.size(); }
-    std::size_t capacity() const noexcept { return capacity_; }
-    std::uint64_t ttl_ms() const noexcept { return ttl_ms_; }
-    bool empty() const noexcept { return queue_.empty(); }
-    const Record& front() const { return queue_.front(); }
+    virtual std::size_t size() const = 0;
+    virtual bool empty() const = 0;
+    virtual const Record& front() const = 0;
 
-    std::uint64_t dropped() const noexcept { return dropped_; }      // 容量超限丢弃
-    std::uint64_t expired() const noexcept { return expired_; }      // TTL 过期丢弃
-    std::uint64_t highest_seq() const noexcept { return highest_seq_; }
-    std::uint64_t lowest_seq() const noexcept { return queue_.empty() ? 0 : queue_.front().seq; }
+    virtual std::uint64_t dropped() const = 0;       // 容量超限丢弃
+    virtual std::uint64_t expired() const = 0;       // TTL 过期丢弃
+    virtual std::uint64_t highest_seq() const = 0;   // 已落库的最高 seq
+    virtual std::uint64_t lowest_seq() const = 0;
 
     // 统计「真正发出去」（被 ack）的条数，用于与对账器交叉核对
-    std::uint64_t acked_count() const noexcept { return acked_count_; }
+    virtual std::uint64_t acked_count() const = 0;
+
+    // seq 水位线钩子：BackfillController 每分配一个 seq 就通知一次。
+    // 内存版不需要（进程生共死）；SQLite 版用它持久化「已分配的最高 seq」，
+    // 重启后 last_seq_hint() 从这里恢复 —— seq 绝不重用。
+    virtual void note_seq(std::uint64_t /*seq*/) {}
+
+    // 重启恢复用：下一次分配应从哪个 seq 之后开始（已分配的最高 seq）。
+    // 默认实现退化为 highest_seq()（内存版语义）；持久化版返回持久化的水位线。
+    virtual std::uint64_t last_seq_hint() const { return highest_seq(); }
+};
+
+class RecordStore : public IRecordStore {
+public:
+    RecordStore(std::size_t capacity, std::uint64_t ttl_ms);
+
+    // 落库。返回 false 表示**因容量上限被丢弃**（dropped 计数 +1，这是真实数据丢失）
+    bool push(const Record& rec) override;
+
+    // 对端已确认 seq 及之前的全部记录
+    void ack(std::uint64_t seq) override;
+
+    // TTL 清理：移除超过 TTL 仍未确认的记录并计入 expired。
+    // 已确认的早就被 ack() 回收了，所以这里清掉的基本都是「断网太久、再不发就过期」的数据。
+    // ⇒ 「断网时长必须小于 TTL」是设计约束：TTL 设小了就一定会丢数据，而且对账器会报出来。
+    void expire(std::uint64_t now_ms) override;
+
+    std::size_t size() const override { return queue_.size(); }
+    std::size_t capacity() const noexcept { return capacity_; }
+    std::uint64_t ttl_ms() const noexcept { return ttl_ms_; }
+    bool empty() const override { return queue_.empty(); }
+    const Record& front() const override { return queue_.front(); }
+
+    std::uint64_t dropped() const override { return dropped_; }      // 容量超限丢弃
+    std::uint64_t expired() const override { return expired_; }      // TTL 过期丢弃
+    std::uint64_t highest_seq() const override { return highest_seq_; }
+    std::uint64_t lowest_seq() const override { return queue_.empty() ? 0 : queue_.front().seq; }
+
+    // 统计「真正发出去」（被 ack）的条数，用于与对账器交叉核对
+    std::uint64_t acked_count() const override { return acked_count_; }
 
 private:
     std::deque<Record> queue_;   // seq 递增
@@ -185,8 +226,11 @@ struct LinkStats {
 
 class BackfillController {
 public:
-    BackfillController(RecordStore& store, ITransport& transport, IClock& clock,
-                       BackfillConfig config = BackfillConfig{});
+    // seq_start：重启恢复用 —— 传入 IRecordStore::last_seq_hint()（持久化水位线），
+    // 让 seq 从断点之后继续分配，绝不重用。新进程不传（= 0，从 1 开始）。
+    BackfillController(IRecordStore& store, ITransport& transport, IClock& clock,
+                       BackfillConfig config = BackfillConfig{},
+                       std::uint64_t seq_start = 0);
 
     // 采集到一个样本：分配 seq 由调用方给（或见 next_seq()），落库并按状态发送
     void on_sample(const Record& rec);
@@ -197,8 +241,12 @@ public:
     LinkState state() const noexcept { return state_; }
     const LinkStats& stats() const noexcept { return stats_; }
 
-    // 单调序列号分配器（绝不重用；进程重启后应由持久化的水位线恢复）
-    std::uint64_t next_seq() noexcept { return ++seq_; }
+    // 单调序列号分配器（绝不重用；重启后由 seq_start 从持久化水位线恢复）
+    std::uint64_t next_seq() noexcept {
+        ++seq_;
+        store_.note_seq(seq_);   // 持久化版借此落水位线；内存版是空操作
+        return seq_;
+    }
     std::uint64_t last_allocated_seq() const noexcept { return seq_; }
 
 private:
@@ -208,7 +256,7 @@ private:
     void enter_catching_up();
     void enter_live();
 
-    RecordStore& store_;
+    IRecordStore& store_;
     ITransport& transport_;
     IClock& clock_;
     BackfillConfig cfg_;
@@ -233,8 +281,8 @@ struct ProxyConfig {
 
 class DataProxy {
 public:
-    DataProxy(RecordStore& store, ITransport& transport, IClock& clock,
-              ProxyConfig config = ProxyConfig{});
+    DataProxy(IRecordStore& store, ITransport& transport, IClock& clock,
+              ProxyConfig config = ProxyConfig{}, std::uint64_t seq_start = 0);
 
     // ── 单点模式（兼容/旧口径）：一个点位就是一条消息 ──────────────────────
     void sample(std::uint16_t addr, std::uint16_t value);
@@ -250,12 +298,12 @@ public:
 
     LinkState state() const noexcept { return ctrl_.state(); }
     const LinkStats& stats() const noexcept { return ctrl_.stats(); }
-    const RecordStore& store() const noexcept { return store_; }
+    const IRecordStore& store() const noexcept { return store_; }
     // 已分配的最高 seq —— 端到端对账必须拿它去和接收端比，不能用接收端的最大 seq
     std::uint64_t produced_highest_seq() const noexcept { return ctrl_.last_allocated_seq(); }
 
 private:
-    RecordStore& store_;
+    IRecordStore& store_;
     BackfillController ctrl_;
     IClock& clock_;
     ProxyConfig cfg_;

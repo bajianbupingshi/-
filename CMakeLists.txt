@@ -83,6 +83,14 @@ if(GW_BUILD_SIM OR GW_BUILD_DRIVER)
   add_subdirectory(client)
 endif()
 
+# SQLite 持久化记录库（W3 环形缓存的落盘实现）。
+# 依赖系统 sqlite3 开发包（Ubuntu: libsqlite3-dev）；Windows 本机默认关
+# （需要时用 amalgamation 编一个即可）。IRecordStore 契约在 gw_common，零依赖。
+option(GW_BUILD_SQLITE "构建 SQLite 持久化记录库（W3 环形缓存）" OFF)
+if(GW_BUILD_SQLITE)
+  add_subdirectory(store)
+endif()
+
 option(GW_BUILD_DRIVER "构建 Neuron 驱动插件（自研件②）" OFF)
 
 if(GW_BUILD_DRIVER)

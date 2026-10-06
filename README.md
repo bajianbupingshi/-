@@ -2,7 +2,8 @@
 
 > 本目录是《工业物联网关落地方案》的代码落地部分。
 > **当前进度：W2 全部完成（D7 已建仓，tag `v0.1.0`）** —— 协议层（CRC16 / 帧编解码 / 显式状态机）+ 设备模拟器（asio）+ 边缘代理可靠性内核 + 真实 MQTT 传输（Paho）+ Neuron 驱动插件（SDK 垫片路线）全部实测；WSL 真环境 Quick Start 链路已跑通。
-> **尚未开始**：W3 边缘数据代理服务化（规则引擎 / SQLite 环形缓存 / 多线程 TSan）、压测矩阵与实验报告、面板与 QEMU aarch64。（R9 的 Async API 改造已于 2026-10-07 完成，见下文）
+> **当前进度：W3-1 环形缓存完成**（SQLite 持久化记录库 + 断点续传验收全绿，2026-10-07）；R9 的 Async API 改造同日完成（见下文）。
+> **尚未开始**：W3 边缘数据代理服务化（规则引擎 / 多线程 TSan）、压测矩阵与实验报告、面板与 QEMU aarch64。
 
 ## 目录
 
@@ -17,6 +18,8 @@ gateway/
   apps/mqtt_e2e/            真实 MQTT 端到端（Paho + 真 broker + 断网续传 + 接收端对账）
   mqtt/                     真实 MQTT 传输（Paho 隔离在独立 target，gw_common 保持零依赖）
   client/                   NGWP 同步客户端（插件与自检共用的设备对话方）
+  store/                    **SQLite 持久化记录库**（W3 环形缓存：IRecordStore 的落盘实现，
+                            断电续传 + seq 水位线，GW_BUILD_SQLITE=ON 时构建）
   plugins/driver/           **Neuron 驱动插件**（薄 C 描述符 + C++ 逻辑 + SDK 垫片 + 假 Neuron 自检）
   tests/                    表驱动单测 + GoogleTest 兼容垫片
   tools/build_host.sh       本机双编译器自检（含模拟器与 MQTT 端到端）
@@ -337,6 +340,24 @@ RESULT: 5 checks, 0 failed
 `MQTTAsync_disconnect` 吃 options 结构体而非裸超时；1.3.13 没有
 `MQTTAsync_publish`（用 `MQTTAsync_send` + responseOptions 拿 token）；
 bench 的 A/B 对比被偶发建连抖动翻转 ⇒ 计时前预热建连 + ctest 样本加大到 600 点位。
+
+## W3-1 环形缓存：SQLite 持久化记录库（断电续传的落盘件）
+
+内存版 `RecordStore` 的语义（容量满丢最新 / ack 回收 / TTL 过期）被抽成了
+`IRecordStore` 接口，`store/` 给出 SQLite 落盘实现 —— 控制器与代理只认接口，
+两个实现由同一组单测钉住同一份行为契约。
+
+| 点 | 做法 | 为什么 |
+| -- | -- | -- |
+| 落库 | 每条记录一行（seq 主键 + ts_ms + points BLOB），WAL + synchronous=NORMAL | 进程被杀（SIGKILL）零丢失；「断电可能丢最后一笔」在环形缓存场景可接受（TTL 本来就丢），要更强改 FULL |
+| seq 水位线 | 控制器每分配一个 seq 经 `note_seq()` 落 meta 表；重启后 `last_seq_hint()` 恢复 | **seq 绝不重用**是对账与去重的根基（`reliability.h` 里预留的注释由此兑现） |
+| 接口隔离 | sqlite3.h 被 PIMPL 挡在 .cpp；直接用 C API 不引 SQLiteCpp | gw_common 保持零依赖；SQL 面积只有 5 条语句，多一个包装库不划算 |
+| 断点续传 | `DataProxy`/`BackfillController` 构造新增 `seq_start` 参数，接线时传 `store.last_seq_hint()` | 重启后从断点之后继续分配，已落库未确认的记录原样排空 |
+
+验收场景（`tests/test_sqlite_store.cpp::RestartResumeScenario`）：
+断网产出 20 条 → 进程「崩溃」（不 flush，靠 SQLite 持久化）→ 重启后 20 条原样回来、
+水位线 = 20 → 新数据从 seq 21 续采 → 积压排空 → **跨重启 Ledger 对账 30 条唯一、丢失 0、重复 0**。
+构建：`GW_BUILD_SQLITE=ON`（WSL presets / CI 已开；Windows 本机默认关）。
 
 ### 三个实测撞出来的坑（都是真 bug，不是配置问题）
 

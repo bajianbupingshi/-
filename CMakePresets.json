@@ -24,6 +24,7 @@
         "GW_BUILD_SIM": "ON",
         "GW_BUILD_DRIVER": "ON",
         "GW_WITH_MQTT": "ON",
+        "GW_BUILD_SQLITE": "ON",
         "GW_WERROR": "ON"
       }
     },
@@ -39,6 +40,7 @@
         "GW_BUILD_SIM": "ON",
         "GW_BUILD_DRIVER": "ON",
         "GW_WITH_MQTT": "ON",
+        "GW_BUILD_SQLITE": "ON",
         "GW_WERROR": "ON"
       }
     },
@@ -55,6 +57,7 @@
         "GW_BUILD_SIM": "ON",
         "GW_BUILD_DRIVER": "ON",
         "GW_WITH_MQTT": "ON",
+        "GW_BUILD_SQLITE": "ON",
         "GW_WERROR": "ON"
       }
     },
@@ -71,6 +74,7 @@
         "GW_BUILD_SIM": "ON",
         "GW_BUILD_DRIVER": "ON",
         "GW_WITH_MQTT": "ON",
+        "GW_BUILD_SQLITE": "ON",
         "GW_WERROR": "ON"
       }
     }

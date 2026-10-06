@@ -21,7 +21,7 @@ jobs:
         # asio 由 CMake FetchContent 拉取，所以 git 必需。
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build g++ git libgtest-dev libpaho-mqtt-dev
+          sudo apt-get install -y cmake ninja-build g++ git libgtest-dev libpaho-mqtt-dev libsqlite3-dev
 
       - name: 配置
         run: cmake --preset ${{ matrix.preset }}
@@ -52,7 +52,7 @@ jobs:
       - name: 安装工具链
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build g++ git libgtest-dev libpaho-mqtt-dev
+          sudo apt-get install -y cmake ninja-build g++ git libgtest-dev libpaho-mqtt-dev libsqlite3-dev
 
       - name: 配置（ASan + UBSan）
         run: cmake --preset wsl-asan

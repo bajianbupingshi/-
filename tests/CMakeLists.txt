@@ -9,8 +9,16 @@ set(GW_TEST_SOURCES
     test_reliability.cpp
 )
 
+# SQLite 持久化版（GW_BUILD_SQLITE=ON 时才存在）—— 与内存版钉同一份契约
+if(TARGET gw_store_sqlite)
+    list(APPEND GW_TEST_SOURCES test_sqlite_store.cpp)
+endif()
+
 add_executable(gw_tests ${GW_TEST_SOURCES})
 target_link_libraries(gw_tests PRIVATE gw_common)
+if(TARGET gw_store_sqlite)
+    target_link_libraries(gw_tests PRIVATE gw_store_sqlite)
+endif()
 target_include_directories(gw_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 # 优先用系统 GoogleTest；没有就用内置垫片（同一份测试源码，两边都能跑）
