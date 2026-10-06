@@ -1,0 +1,36 @@
+{
+  "tag_regex": [
+    { "type": 3, "regex": "^[0-9]+![0-9]+$|^[0-9]+$" },
+    { "type": 4, "regex": "^[0-9]+![0-9]+$|^[0-9]+$" }
+  ],
+  "group_interval": 1000,
+  "host": {
+    "name": "Device IP",
+    "name_zh": "设备地址",
+    "description": "NGWP device simulator IP address",
+    "description_zh": "NGWP 设备模拟器 IP 地址",
+    "attribute": "required",
+    "type": "string",
+    "default": "127.0.0.1"
+  },
+  "port": {
+    "name": "Device Port",
+    "name_zh": "设备端口",
+    "description": "NGWP device simulator TCP port",
+    "description_zh": "NGWP 设备模拟器 TCP 端口",
+    "attribute": "required",
+    "type": "int",
+    "default": 1502,
+    "valid": { "min": 1, "max": 65535 }
+  },
+  "timeout": {
+    "name": "Timeout",
+    "name_zh": "超时",
+    "description": "Per-request timeout in milliseconds",
+    "description_zh": "单次请求超时（毫秒）",
+    "attribute": "optional",
+    "type": "int",
+    "default": 1000,
+    "valid": { "min": 100, "max": 60000 }
+  }
+}

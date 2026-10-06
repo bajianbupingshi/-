@@ -317,4 +317,10 @@ typedef struct neu_plugin_common {
     char                       name[NEU_NODE_NAME_LEN];
 } neu_plugin_common_t;
 
+/* open() 里必须把 magic 设为 NEU_PLUGIN_MAGIC_NUMBER（0x43474D50，即 "PMGC"）——
+ * Neuron 建节点时 neu_plugin_common_check() 只认它。P0-3 真机联调实测：
+ * magic 为 0 会在 neu_adapter_create 的 assert 处把整个 Neuron 进程打崩。
+ * 官方的 neu_plugin_common_init() 是宿主符号（真 SDK 头不导出 MAGIC 宏），
+ * 本插件改为直接赋值，让 .so 保持零外部符号依赖。 */
+
 #endif /* NEURON_SDK_SHIM_PLUGIN_H */

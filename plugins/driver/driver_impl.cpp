@@ -138,6 +138,13 @@ GwPlugin* as_plugin(neu_plugin_t* p) {
 
 }  // namespace
 
+// 与 Neuron src/base/neu_plugin_common.c 一致（真 SDK 头文件不导出该宏，
+// 官方的 neu_plugin_common_init() 是宿主符号 —— .so 里引它会要求宿主导出；
+// 直接赋值让插件零外部符号依赖，driver_check 假 Neuron 也能独立加载）
+#ifndef NEU_PLUGIN_MAGIC_NUMBER
+#define NEU_PLUGIN_MAGIC_NUMBER 0x43474D50u  // "PMGC"
+#endif
+
 // ── 生命周期 ────────────────────────────────────────────────────────────────
 extern "C" neu_plugin_t* gw_driver_open(void) {
     try {
@@ -146,6 +153,10 @@ extern "C" neu_plugin_t* gw_driver_open(void) {
             return nullptr;
         }
         std::memset(&p->common, 0, sizeof(p->common));
+        // ★ common.magic 必须是 NEU_PLUGIN_MAGIC_NUMBER —— Neuron 建节点时
+        //   neu_plugin_common_check() 只认它（P0-3 真机联调实测：magic 为 0
+        //   会让 neu_adapter_create 的 assert 把整个 Neuron 进程打崩）。
+        p->common.magic = NEU_PLUGIN_MAGIC_NUMBER;
         p->st = new (std::nothrow) DriverState();
         if (p->st == nullptr) {
             delete p;
