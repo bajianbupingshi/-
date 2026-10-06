@@ -83,7 +83,8 @@ void usage() {
         "  mqtt_e2e --bench [--count 总点位数] [--points 批量大小]      打包前后吞吐对比\n"
         "  mqtt_e2e --broker [--port 1884] [--expect 消息数] [--expect-points N]\n"
         "  mqtt_e2e --pub --host H --port P [--count 周期] [--points N] [--period-ms M] [--outage-sec S]\n"
-        "  mqtt_e2e --sub --host H --port P [--expect 消息数] [--expect-points N] [--topic T]\n");
+        "  mqtt_e2e --sub --host H --port P [--expect 消息数] [--expect-points N] [--topic T]\n"
+        "  mqtt_e2e --rawsub --host H --port P --topic T [--count N] [--outage-sec 秒]   打印原始报文\n");
 }
 
 bool parse(int argc, char** argv, Options& o) {
@@ -106,6 +107,8 @@ bool parse(int argc, char** argv, Options& o) {
             o.role = "pub";
         } else if (a == "--sub") {
             o.role = "sub";
+        } else if (a == "--rawsub") {
+            o.role = "rawsub";
         } else if (a == "--host") {
             o.host = val("--host");
         } else if (a == "--port") {
@@ -527,6 +530,63 @@ int run_bench(const Options& o) {
     return g_failed == 0 ? 0 : 1;
 }
 
+// ── 原始订阅：用来验证**别人的** MQTT 输出（比如 Neuron 自己的载荷格式）──────
+//
+// 为什么单独一个模式：--sub 期望的是本项目的 RecordCodec 载荷；
+// 要验证 Neuron 这类第三方网关的发布，只需把 topic + 原始载荷打出来看。
+int run_rawsub(const Options& o) {
+    const std::string address = "tcp://" + o.host + ":" + std::to_string(o.port);
+    MQTTClient sub = nullptr;
+    if (MQTTClient_create(&sub, address.c_str(), "gw-rawsub", MQTTCLIENT_PERSISTENCE_NONE,
+                          nullptr) != MQTTCLIENT_SUCCESS) {
+        std::printf("创建订阅客户端失败\n");
+        return 1;
+    }
+    MQTTClient_connectOptions opts = MQTTClient_connectOptions_initializer;
+    opts.keepAliveInterval = 20;
+    opts.cleansession = 1;
+    if (MQTTClient_connect(sub, &opts) != MQTTCLIENT_SUCCESS) {
+        std::printf("连接 %s 失败\n", address.c_str());
+        return 1;
+    }
+    if (MQTTClient_subscribe(sub, o.topic.c_str(), 0) != MQTTCLIENT_SUCCESS) {
+        std::printf("订阅 %s 失败\n", o.topic.c_str());
+        return 1;
+    }
+    std::printf("原始订阅: %s topic=%s（最多等 %llu 秒，收到 %llu 条后退出）\n", address.c_str(),
+                o.topic.c_str(), static_cast<unsigned long long>(o.outage_sec == 0 ? 15 : o.outage_sec),
+                static_cast<unsigned long long>(o.count));
+
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::seconds(o.outage_sec == 0 ? 15 : o.outage_sec);
+    std::uint64_t got = 0;
+    while (got < o.count && std::chrono::steady_clock::now() < deadline) {
+        char* topic = nullptr;
+        int topic_len = 0;
+        MQTTClient_message* m = nullptr;
+        MQTTClient_receive(sub, &topic, &topic_len, &m, 200);
+        if (m != nullptr) {
+            ++got;
+            std::string payload(static_cast<const char*>(m->payload),
+                                static_cast<std::size_t>(m->payloadlen));
+            std::printf("  #%llu topic=%s len=%d payload=%.300s\n",
+                        static_cast<unsigned long long>(got), topic != nullptr ? topic : "(null)",
+                        m->payloadlen, payload.c_str());
+            std::fflush(stdout);
+            MQTTClient_freeMessage(&m);
+        }
+        if (topic != nullptr) {
+            MQTTClient_free(topic);
+        }
+    }
+    check(got >= 1, "★ 应至少收到 1 条北向报文");
+    MQTTClient_unsubscribe(sub, o.topic.c_str());
+    MQTTClient_disconnect(sub, 1000);
+    MQTTClient_destroy(&sub);
+    std::printf("\nRESULT: %d checks, %d failed\n", g_checks, g_failed);
+    return g_failed == 0 ? 0 : 1;
+}
+
 // ── 自检：进程内 broker + 发布 + 脚本化断网 + 自动对账 ──────────────────────
 int run_selftest(const Options& o) {
     std::printf("=========== MQTT 端到端自检（断网续传）===========\n");
@@ -773,6 +833,9 @@ int main(int argc, char** argv) {
     }
     if (opt.role == "sub") {
         return run_sub(opt);
+    }
+    if (opt.role == "rawsub") {
+        return run_rawsub(opt);
     }
     usage();
     return 2;

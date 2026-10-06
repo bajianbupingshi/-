@@ -141,8 +141,10 @@ int main(int argc, char** argv) {
     check(module->module_name != nullptr &&
               std::strcmp(module->module_name, "NGWP Sim") == 0,
           "② module_name 应为 NGWP Sim");
-    check(module->type == NEU_NA_TYPE_DRIVER, "② type 应为 NEU_NA_TYPE_DRIVER");
-    check(module->kind == NEU_PLUGIN_KIND_SYSTEM, "② kind 应为 SYSTEM");
+    // ★ 用**字面量**断言，不能用垫片里的常量：两侧同错的话自检照样全绿。
+    //   实测踩过 —— 垫片曾把 DRIVER 写成 0、SYSTEM 写成 0，22/22 通过但对真 SDK 是错的。
+    check(module->type == 1, "② type 必须等于真实 SDK 的 NEU_NA_TYPE_DRIVER=1");
+    check(module->kind == 1, "② kind 必须等于真实 SDK 的 NEU_PLUGIN_KIND_SYSTEM=1");
     check(module->intf_funs != nullptr, "② intf_funs 应非空");
 
     const neu_plugin_intf_funs_t* funs = module->intf_funs;

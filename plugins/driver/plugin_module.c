@@ -55,7 +55,7 @@ static const neu_plugin_intf_funs_t gw_plugin_intf_funs = {
 /* ── 模块描述符：Neuron 通过 dlsym("neu_plugin_module") 取它 ─────────────── */
 GW_EXPORT const neu_plugin_module_t neu_plugin_module = {
     .version         = NEURON_PLUGIN_VER_1_0,
-    .schema          = "ngwp-sim.json",
+    .schema          = "ngwp-sim",   /* 官方写法：不带 .json 扩展名 */
     .module_name     = "NGWP Sim",
     .module_descr    = "NGWP protocol device driver (custom)",
     .module_descr_zh = "NGWP 协议设备驱动（自研）",
@@ -64,7 +64,7 @@ GW_EXPORT const neu_plugin_module_t neu_plugin_module = {
     .kind            = NEU_PLUGIN_KIND_SYSTEM,
     .display         = true,
     .single          = false,
-    .single_name     = NULL,
-    .timer_type      = NEU_EVENT_TIMER_ALWAYS,
-    .cache_type      = NEU_TAG_CACHE_TYPE_NONE,
+    /* 官方 modbus 插件的描述符只写到这里 —— timer_type / cache_type / single_name
+       一律省略（designated initializer 里省略即 0）。照着写最安全：
+       既不会用错常量，也不会因为某个常量在真 SDK 里不存在而编译失败。 */
 };

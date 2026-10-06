@@ -90,22 +90,28 @@ typedef enum {
 } neu_datatag_string_type_e;
 
 typedef enum {
-    NEU_NA_TYPE_DRIVER = 0,
-    NEU_NA_TYPE_APP    = 1,
-} neu_node_type_e;
+    NEU_NA_TYPE_DRIVER = 1,
+    NEU_NA_TYPE_APP    = 2,
+} neu_adapter_type_e,
+    neu_node_type_e;
 
-typedef enum {
-    NEU_PLUGIN_KIND_SYSTEM = 0,
-    NEU_PLUGIN_KIND_CUSTOM = 1,
+/* ★ 取值必须与真实 define.h 一致（曾经写错成 0/1，见文件尾的垫片漂移检查） */
+typedef enum neu_plugin_kind {
+    NEU_PLUGIN_KIND_STATIC = 0,
+    NEU_PLUGIN_KIND_SYSTEM = 1,
+    NEU_PLUGIN_KIND_CUSTOM = 2,
 } neu_plugin_kind_e;
 
+/* 真实定义在 event/event.h：BLOCK=0 / NOBLOCK=1（不是 NO/ALWAYS —— 曾写错） */
 typedef enum {
-    NEU_EVENT_TIMER_NO     = 0,
-    NEU_EVENT_TIMER_ALWAYS = 1,
+    NEU_EVENT_TIMER_BLOCK   = 0,
+    NEU_EVENT_TIMER_NOBLOCK = 1,
 } neu_event_timer_type_e;
 
+/* 真实定义里没有 _NONE（曾凭想象发明过一个常量） */
 typedef enum {
-    NEU_TAG_CACHE_TYPE_NONE = 0,
+    NEU_TAG_CACHE_TYPE_INTERVAL = 0,
+    NEU_TAG_CACHE_TYPE_NEVER    = 1,
 } neu_tag_cache_type_e;
 
 /* ── 4. 值类型与上报回调 ────────────────────────────────────────────────── */

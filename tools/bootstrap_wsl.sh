@@ -19,7 +19,6 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="${HOME}/gateway"
 SKIP_APT="${SKIP_APT:-0}"
 PRESETS="${PRESETS:-wsl-debug wsl-release wsl-asan}"
-ITEMS="CMakeLists.txt CMakePresets.json .gitignore README.md common apps plugins tests docs tools"
 
 echo "════════════════════════════════════════════════════════════"
 echo " 源目录   : ${SRC}"
@@ -33,9 +32,22 @@ fi
 
 # ── 1) 投递到 Linux 文件系统（在 9p 上直接构建会慢很多，所以先拷进 ~）──────
 mkdir -p "${DEST}"
-for item in ${ITEMS}; do
-    if [ -e "${SRC}/${item}" ]; then
-        cp -r "${SRC}/${item}" "${DEST}/"
+# ★ 不要硬编码文件清单（${ITEMS}）—— 实测踩过：清单停在 W1 早期，
+#   后来新增的 mqtt/ 与 client/ 没进清单 ⇒ 只投递 54 个文件，
+#   CMake 报 "add_subdirectory given source "mqtt" which is not an existing directory"。
+#   改成整树复制 + 显式排除 + 关键目录自检：缺了当场响亮失败，而不是到配置期才炸。
+tar -C "${SRC}" -cf - \
+    --exclude='./build*' \
+    --exclude='*.log' \
+    --exclude='./.git' \
+    --exclude='./.workbuddy' \
+    . | tar -C "${DEST}" -xf -
+
+for need in CMakeLists.txt CMakePresets.json .gitignore .gitattributes \
+            common client mqtt plugins/driver apps/sim apps/mqtt_e2e tests tools docs; do
+    if [ ! -e "${DEST}/${need}" ]; then
+        echo "[FAIL] 投递后缺少 ${need} —— 复制/排除规则有漏洞，先修这里再继续"
+        exit 1
     fi
 done
 echo "已投递 $(find "${DEST}" -type f -not -path '*/build-*/*' -not -name '*.log' | wc -l) 个源文件"
