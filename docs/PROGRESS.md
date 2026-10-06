@@ -13,7 +13,7 @@
 | W2 自研件③ | 边缘数据代理可靠性内核（续传状态机 + 对账 + 反转断言） | ✅ 实测 |
 | W2 自研件② | Neuron 驱动插件（薄 C 描述符 + C++ 逻辑 + SDK 垫片 + 「假 Neuron」自检） | ✅ 实测（本机垫片路线） |
 | W2 传输层 | 真实 MQTT（Paho C 同步 API）+ 断网续传跑在真网络上 + 批量打包 | ✅ 实测 |
-| D3 Quick Start | 整条链路 REST 化脚本 | ⏳ 脚本已就绪，**未在 WSL 实跑** |
+| D3 Quick Start | 整条链路 REST 化脚本 | ✅ 实测（2026-10-06 真环境跑通：南向采值、北向 MQTT 每秒一条、订阅 `#` 收到报文） |
 | D7 | 建仓 + 首次提交 + 打里程碑 tag | ✅ 完成（`3e40760`，tag `v0.1.0`，63 文件 / 9846 行） |
 
 ## 二、可直接引用的实测数字
@@ -27,6 +27,25 @@
 | ctest | **8 个用例、全过、约 19 秒** |
 | 编译告警 | `-Wall -Wextra -Wpedantic -Wshadow -Werror` **零告警** |
 | ASan/UBSan | 核心逻辑**零告警**（WSL，`wsl-asan` preset） |
+| WSL 三套 preset（2026-10-06 实测） | `wsl-debug` / `wsl-release` / `wsl-asan`：ctest **8/8**、**88/88** 单测（系统 GoogleTest，12 套件）、演示 18/18，三套确定性哈希一致 |
+
+### 2.1.1 ★ WSL 复验抓到的真 bug（双平台互检第二例）
+
+2026-10-06 首次在 WSL 跑齐三套 preset（此前 WSL 记录停留在 52 用例时代，且 preset 的
+`GW_BUILD_DRIVER=ON` 是 D7 才补的，从未被 Linux 实测过）：
+
+```
+libgw_client.a(client.cpp.o): relocation R_X86_64_TPOFF32 against symbol
+asio::... can not be used when making a shared object; recompile with -fPIC
+```
+
+- **根因**：`gw_driver` 是共享库，它链接的静态库 `gw_client` / `gw_common` 默认不带 `-fPIC`；
+- **为什么本机没暴露**：Windows/MinGW（PE）没有这类重定位限制，双编译器也编不出来 ——
+  只有目标类平台（Linux）能暴露。与「clang 抓 `-Wunused-private-field`」同类：
+  **互检矩阵多一维，就能多抓一类问题**；
+- **修法**：根 `CMakeLists` 全局 `set(CMAKE_POSITION_INDEPENDENT_CODE ON)`（`df21fd4`），
+  Windows 侧重跑 8/8 无回归；
+- **教训**：CI 里那两条 wsl preset（也开 DRIVER）在修复前一旦推送**必挂** —— 复验跑在推送之前，值。
 
 ### 2.2 确定性（这是我认为最硬的一条）
 
@@ -62,6 +81,7 @@ g++ / clang++、Windows(MinGW) / Linux(GCC 13)、`-O0` / `-O2`。
 | R1 插件 SDK 卡壳 | 最大风险，有降级线 | **基本解除**：客户端层已独立验证（20/20）；插件本体用「假 Neuron」实测通过（22/22，对真设备 30/30）。剩余仅"真 SDK 构建与真 Neuron 联调"（需 WSL） |
 | R6 构建口径（`-O0` / `CFLAGS` 失效） | 会让性能数据作废 | **已解决并写进文档**：`DISABLE_WERROR` 会让 `$ENV{CFLAGS}` 整段被跳过，必须用 `-DCMAKE_C_FLAGS`；构建后 `compile_commands.json` 自证 |
 | R8 libxml2 静态库丢依赖 | 未预见 | **已解决**：新增条目，链接期缺 `-lz -llzma`，成因是裸名链接 + 静态库 |
+| R10 静态库链接进共享库缺 PIC（WSL 复验抓到） | 未预见 | **已解决**（`df21fd4`）：全局 `CMAKE_POSITION_INDEPENDENT_CODE ON`；Windows/MinGW 不报此错，只有 Linux 暴露 —— 见 2.1.1 |
 | R9 MQTT 速率被客户端库限制 | 未预见 | **已量化**：见 2.4。待决策：Async API 改造 or 下调指标 |
 
 ## 四、面试可讲清单（每条都有实物，不是背概念）
@@ -83,9 +103,8 @@ g++ / clang++、Windows(MinGW) / Linux(GCC 13)、`-O0` / `-O2`。
 
 | 项 | 原因 | 下一步 |
 | -- | -- | -- |
-| 真 SDK 构建插件 + 真 Neuron 联调 | 需 WSL（`wsl.exe` 被安全策略拦） | 按 `plugins/README.md` 的命令跑 |
-| Quick Start 闭环（`setup_quickstart_wsl.sh`） | 同上，脚本已就绪未跑 | 一条命令 |
-| `ngwp-sim.json` / `plugins.json` 登记 | 属真 SDK 侧 | 与上一条一起 |
+| 真 SDK 构建插件 + 真 Neuron 联调 | 待执行（`wsl.exe` 已可用，WSL 里 `~/neuron` 底座与 `package-sdk.sh` 就绪） | 按 `plugins/README.md` 的命令跑：打包/下载 SDK → 真头文件构建 → dlopen 冒烟 |
+| `ngwp-sim.json` / `plugins.json` 登记 | 属真 SDK 侧（`plugin_module.c` 的 `.schema = "ngwp-sim"` 已就位，schema 文件本身待写） | 与上一条一起 |
 | TSan 零竞态 | 目前是单线程，跑了没意义 | 边缘代理上多线程后再跑 |
 | Async API 改造 | R9 待决策 | 若冲 100ms 周期大规模档位 |
 | 压测报告（图表） | 依赖压测矩阵跑完 | W5 |
@@ -95,8 +114,8 @@ g++ / clang++、Windows(MinGW) / Linux(GCC 13)、`-O0` / `-O2`。
 | 项 | 值 |
 | -- | -- |
 | 首次提交 | `3e40760` — 63 文件 / 9846 行插入 |
-| 提交链 | `daf0e03` ← `16e85a6` ← `5ea9590` ← `c5891c9` ← `3e40760`（tag `v0.1.0`） |
-| 最新提交 | `daf0e03` — 维护体检后清理：`parser.h` 死声明删除、`.gitignore` 补 `__pycache__`、README 进度口径对齐（**双编译器复验全绿后提交**，21,128 断言与清理前逐位一致） |
+| 提交链 | `df21fd4` ← `daf0e03` ← `16e85a6` ← `5ea9590` ← `c5891c9` ← `3e40760`（tag `v0.1.0`） |
+| 最新提交 | `df21fd4` — fix: 全库 PIC（WSL 复验抓到的真 bug，见 2.1.1；Windows 重跑 8/8 无回归）。另有 docs 提交补录本条与 WSL 三套 preset 实测记录 |
 | 里程碑标签 | `v0.1.0`（annotated，指向 `3e40760`） |
 | 分支 | `main` |
 | 仓库体积 | `.git` 约 370 KB（**无构建产物**：`build*` / `*.o` / `*.log` / `CMakeCache` / `__pycache__` 全部被忽略） |

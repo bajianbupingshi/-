@@ -348,6 +348,7 @@ gw_sim --port 15020 & driver_check --lib <…> --device-port 15020   #  30 check
 | 环境与代码解耦 | 内置 GoogleTest 兼容垫片 | 「代码对不对」与「环境装没装」必须能分开验证 |
 | 长期不变的检查器 | 对账必须同时用「端到端」与「接收侧自洽」两个口径 | 只用后者会把「从未发出的数据」当成没丢（实测踩过） |
 | 测试登记 | `ctest -N` 核对条数 | `enable_testing()` 若晚于 `add_test`，测试会被**静默丢弃**；「ctest 通过」不等于「测试都登记了」 |
+| 跨平台互检（第二例） | 静态库不带 `-fPIC` 在 MinGW 上永远编不出错，Linux 链接 `.so` 才炸 ⇒ 全库 `POSITION_INDEPENDENT_CODE ON`（`df21fd4`） | WSL 复验抓到：互检矩阵每多一维（编译器/平台/优化级别/sanitizer）就能多抓一类问题；CI 的 wsl preset 修复前一旦推送必挂 |
 
 ## 已知边界（诚实声明）
 
