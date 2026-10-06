@@ -358,7 +358,7 @@ gw_sim --port 15020 & driver_check --lib <…> --device-port 15020   #  30 check
   从算法上就与 libm 无关。
 - 演示里的重放哈希用的是「正弦 + 随机游走」混合流。早期版本只挂正弦 —— 而正弦无状态、
   不消耗 RNG，导致「换 seed 字节流不变」却在最初被判为通过；已修（混入一个随机游走点位）。
-- 插件本体已走「假 Neuron」垫片路线实测（22/22，完整链路 30/30）；**真 SDK 构建 + 真 Neuron 加载联调尚未做**（需 WSL，命令见 `plugins/README.md`）。
+- 插件已完成全链路实测：本机垫片路线（22/22 + 30/30）⇒ WSL 真 SDK 头构建（漂移复核 528 常量一致）⇒ **真 Neuron 加载建节点跑通**（REST 建节点/写参数/建组/建点位 error 0，连续读回正弦活数据；`tools/ngwp_node_rest.sh` 可复现）。踩坑实录见 `plugins/README.md`。
 - Windows 本机：llvm-mingw 的 libc++ 与本机 asio 组合，运行期 `std::thread` 会抛 `system_error`
   （已用最小程序隔离确认是工具链交互问题，非本项目代码）。故本机 `gw_sim --selftest`
   只由 g++ 运行；WSL/Linux 不受此限。详见 `apps/README.md`。

@@ -11,7 +11,7 @@
 | W1 D4–D6 | 工程骨架 + 协议一页定稿 + 协议层（CRC / 编解码 / 状态机）+ 寄存器表与注入 + 表驱动单测 | ✅ 实测 |
 | W2 自研件① | 协议设备模拟器（asio 多客户端 + 进程内端到端自检） | ✅ 实测 |
 | W2 自研件③ | 边缘数据代理可靠性内核（续传状态机 + 对账 + 反转断言） | ✅ 实测 |
-| W2 自研件② | Neuron 驱动插件（薄 C 描述符 + C++ 逻辑 + SDK 垫片 + 「假 Neuron」自检） | ✅ 实测（本机垫片路线） |
+| W2 自研件② | Neuron 驱动插件（薄 C 描述符 + C++ 逻辑 + SDK 垫片 + 「假 Neuron」自检） | ✅ 实测（垫片路线 + 真 SDK 构建 + **真 Neuron 建节点跑通**，2026-10-06） |
 | W2 传输层 | 真实 MQTT（Paho C 同步 API）+ 断网续传跑在真网络上 + 批量打包 | ✅ 实测 |
 | D3 Quick Start | 整条链路 REST 化脚本 | ✅ 实测（2026-10-06 真环境跑通：南向采值、北向 MQTT 每秒一条、订阅 `#` 收到报文） |
 | D7 | 建仓 + 首次提交 + 打里程碑 tag | ✅ 完成（`3e40760`，tag `v0.1.0`，63 文件 / 9846 行） |
@@ -47,6 +47,24 @@ asio::... can not be used when making a shared object; recompile with -fPIC
   Windows 侧重跑 8/8 无回归；
 - **教训**：CI 里那两条 wsl preset（也开 DRIVER）在修复前一旦推送**必挂** —— 复验跑在推送之前，值。
 
+### 2.1.2 ★ 真 Neuron 联调跑通（R1 完全解除，2026-10-06）
+
+真 SDK 头构建 → dlopen 冒烟（22/22）→ 完整链路（30/30）→ 漂移复核（528 常量一致）
+→ **真 Neuron 加载插件 + REST 建节点全流程 error 0 + 连续读回正弦活数据**。
+复现：`tools/ngwp_node_rest.sh`。垫片与真头的 4 类形状差异（全部已回写源码与垫片）：
+
+| 差异 | 症状 | 修法 |
+| -- | -- | -- |
+| 回调藏在 `union{struct driver}` | `->update` 编不过 / 节点回调静默失效 | 访问改 `->driver.update`，垫片补同形嵌套 |
+| `UT_array` 是 uthash 的 `d/icd.sz/i/n` | 手工构造数组的测试代码两路漂移 | 垫片逐字对齐 uthash 2.3.0 |
+| `neu_dvalue_t` 是 `struct{type,value,precision}` | 真 Neuron 按 `type` 解释载荷，不赋值=未定义行为 | 垫片对齐 + `dv.type=NEU_TYPE_UINT16` |
+| `common.magic` 必须是 `0x43474D50`（"PMGC"） | `neu_adapter_create` 的 assert **打崩整个 Neuron 进程** | open() 里赋值（`#ifndef` 兜底宏，.so 零外部符号依赖） |
+
+另有 6 处常量漂移（NODE/GROUP_NAME_LEN=128、TAG_META=20、TAG_FORMAT=16、
+TYPE_ERROR=15、VERSION_MINOR=15）由 `tools/check_sdk_shim.py` 抓出后对齐。
+外围坑：gw_client 原挂在 `GW_BUILD_SIM` 之下（单独开 DRIVER 时静默降级 `-lgw_client`）、
+真 SDK 的 json 封装要补 `<SDK>/neuron` 这条 include、本 daily 版 `/api/v2/ping` 只认 POST。
+
 ### 2.2 确定性（这是我认为最硬的一条）
 
 同一个 seed 的字节流哈希 = **`0xDC11C55788C2B000`**，在以下五种组合下**完全一致**：
@@ -78,7 +96,7 @@ g++ / clang++、Windows(MinGW) / Linux(GCC 13)、`-O0` / `-O2`。
 
 | 风险 | 原判 | 现状 |
 | -- | -- | -- |
-| R1 插件 SDK 卡壳 | 最大风险，有降级线 | **基本解除**：客户端层已独立验证（20/20）；插件本体用「假 Neuron」实测通过（22/22，对真设备 30/30）。剩余仅"真 SDK 构建与真 Neuron 联调"（需 WSL） |
+| R1 插件 SDK 卡壳 | 最大风险，有降级线 | **完全解除**（2026-10-06）：真 SDK 头构建通过（漂移复核 528 常量一致）、真 Neuron 加载建节点跑通（连续读回活数据）。垫片与真头的 4 类形状差异已回写源码（见 2.1.2） |
 | R6 构建口径（`-O0` / `CFLAGS` 失效） | 会让性能数据作废 | **已解决并写进文档**：`DISABLE_WERROR` 会让 `$ENV{CFLAGS}` 整段被跳过，必须用 `-DCMAKE_C_FLAGS`；构建后 `compile_commands.json` 自证 |
 | R8 libxml2 静态库丢依赖 | 未预见 | **已解决**：新增条目，链接期缺 `-lz -llzma`，成因是裸名链接 + 静态库 |
 | R10 静态库链接进共享库缺 PIC（WSL 复验抓到） | 未预见 | **已解决**（`df21fd4`）：全局 `CMAKE_POSITION_INDEPENDENT_CODE ON`；Windows/MinGW 不报此错，只有 Linux 暴露 —— 见 2.1.1 |
@@ -103,19 +121,20 @@ g++ / clang++、Windows(MinGW) / Linux(GCC 13)、`-O0` / `-O2`。
 
 | 项 | 原因 | 下一步 |
 | -- | -- | -- |
-| 真 SDK 构建插件 + 真 Neuron 联调 | 待执行（`wsl.exe` 已可用，WSL 里 `~/neuron` 底座与 `package-sdk.sh` 就绪） | 按 `plugins/README.md` 的命令跑：打包/下载 SDK → 真头文件构建 → dlopen 冒烟 |
-| `ngwp-sim.json` / `plugins.json` 登记 | 属真 SDK 侧（`plugin_module.c` 的 `.schema = "ngwp-sim"` 已就位，schema 文件本身待写） | 与上一条一起 |
 | TSan 零竞态 | 目前是单线程，跑了没意义 | 边缘代理上多线程后再跑 |
 | Async API 改造 | R9 待决策 | 若冲 100ms 周期大规模档位 |
 | 压测报告（图表） | 依赖压测矩阵跑完 | W5 |
+
+> 已从本表移除（2026-10-06 完成）：真 SDK 构建插件 + 真 Neuron 联调、
+> `ngwp-sim.json` 登记 —— 见 2.1.2 与 `tools/ngwp_node_rest.sh`。
 
 ## 六、仓库状态
 
 | 项 | 值 |
 | -- | -- |
 | 首次提交 | `3e40760` — 63 文件 / 9846 行插入 |
-| 提交链 | `df21fd4` ← `daf0e03` ← `16e85a6` ← `5ea9590` ← `c5891c9` ← `3e40760`（tag `v0.1.0`） |
-| 最新提交 | `df21fd4` — fix: 全库 PIC（WSL 复验抓到的真 bug，见 2.1.1；Windows 重跑 8/8 无回归）。另有 docs 提交补录本条与 WSL 三套 preset 实测记录 |
+| 提交链 | `e15ae30` ← `a0ae824` ← `65cf1f6` ← `10e42ea` ← `df21fd4` ← `daf0e03` ← `16e85a6` ← `5ea9590` ← `c5891c9` ← `3e40760`（tag `v0.1.0`） |
+| 最新提交 | `e15ae30` — feat: 真 Neuron 建节点联调全通（R1 完全解除）+ ngwp-sim schema + REST 脚本。此前同日：`65cf1f6` 真 SDK 形状差异修复、`10e42ea` WSL 三套 preset 实测、`df21fd4` PIC 修复（均见 2.1.1 / 2.1.2） |
 | 里程碑标签 | `v0.1.0`（annotated，指向 `3e40760`） |
 | 分支 | `main` |
 | 仓库体积 | `.git` 约 370 KB（**无构建产物**：`build*` / `*.o` / `*.log` / `CMakeCache` / `__pycache__` 全部被忽略） |
