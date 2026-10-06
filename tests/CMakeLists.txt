@@ -7,6 +7,8 @@ set(GW_TEST_SOURCES
     test_injection.cpp
     test_device_model.cpp
     test_reliability.cpp
+    test_bounded_queue.cpp
+    test_proxy_service.cpp
 )
 
 # SQLite 持久化版（GW_BUILD_SQLITE=ON 时才存在）—— 与内存版钉同一份契约

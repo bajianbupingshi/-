@@ -2,8 +2,8 @@
 
 > 本目录是《工业物联网关落地方案》的代码落地部分。
 > **当前进度：W2 全部完成（D7 已建仓，tag `v0.1.0`）** —— 协议层（CRC16 / 帧编解码 / 显式状态机）+ 设备模拟器（asio）+ 边缘代理可靠性内核 + 真实 MQTT 传输（Paho）+ Neuron 驱动插件（SDK 垫片路线）全部实测；WSL 真环境 Quick Start 链路已跑通。
-> **当前进度：W3-1 环形缓存完成**（SQLite 持久化记录库 + 断点续传验收全绿，2026-10-07）；R9 的 Async API 改造同日完成（见下文）。
-> **尚未开始**：W3 边缘数据代理服务化（规则引擎 / 多线程 TSan）、压测矩阵与实验报告、面板与 QEMU aarch64。
+> **当前进度：W3-2 多线程化完成**（EdgeProxyService 服务壳 + TSan 101/101 零竞态，2026-10-07）；W3-1 环形缓存、R9 Async 改造同日完成（见下文）。
+> **尚未开始**：W3-3 规则引擎（阈值/变化率 + JSON 配置）、压测矩阵与实验报告、面板与 QEMU aarch64。
 
 ## 目录
 
@@ -358,6 +358,37 @@ bench 的 A/B 对比被偶发建连抖动翻转 ⇒ 计时前预热建连 + ctes
 断网产出 20 条 → 进程「崩溃」（不 flush，靠 SQLite 持久化）→ 重启后 20 条原样回来、
 水位线 = 20 → 新数据从 seq 21 续采 → 积压排空 → **跨重启 Ledger 对账 30 条唯一、丢失 0、重复 0**。
 构建：`GW_BUILD_SQLITE=ON`（WSL presets / CI 已开；Windows 本机默认关）。
+
+## W3-2 多线程化：边缘代理服务壳（TSan 零竞态）
+
+**架构选择：管道/actor 模型** —— 内核（DataProxy/Store/控制器/传输）只在管道线程上
+被触碰，已验证的单线程语义**零改动、零锁**；多线程的全部同步都发生在边界：
+
+```
+采集线程（任意）                管道线程（唯一）                 Paho 线程（库内）
+──────────────                ────────────────               ─────────────
+produce(点位批) ──► BoundedQueue ──► DataProxy / Store / 控制器 ──► Async 发送
+                     （互斥+cv）                                回调 ──► DeliverySlot(cv)
+```
+
+| 件 | 做法 | 为什么 |
+| -- | -- | -- |
+| `BoundedQueue`（header-only） | 互斥 + 双条件变量；push 不阻塞（满 ⇒ false + 计数），close 唤醒全部等待者 | 采集永不因网络/磁盘停摆；「丢弃计数」是采集侧丢失的独立口径 |
+| `EdgeProxyService` | 采集 API `produce(点位批)`；管道线程排空队列 → `add_point/end_cycle`（一批一条，seq 保序）→ `tick()` 驱动退避/续传（真实时钟 `SteadyClock`） | seq 在管道线程分配 ⇒ 水位线/落库/发送天然串行 |
+| 优雅停止 | `stop()` 关队列 ⇒ 管道排空剩余批次后退出（join） | 已收的批次不丢；store 里未确认记录原样保留（SQLite 断电续传语义） |
+| 内核异常 | 管道 try/catch → `last_error()` 可见并停管道 | SQLite 损坏这类故障不许静默吞 |
+
+### TSan 实测（wsl-tsan preset，101/101 零警告）
+
+1. **TSan 首战抓到的是测试自己的竞态**：对账器 Ledger 在真实系统里住「云端」（另一进程），
+   测试里共享内存化后，主线程轮询 `unique_count()` 与管道线程的 `accept()` 裸竞争
+   （`_Rb_tree::size()` 数据竞争，TSan 报告实锤）—— 修法：测试侧一律经互斥快照读。
+   这条教训值钱：**测试装置的并发正确性也是并发正确性**。
+2. **TSan × 新内核 ASLR 启动崩溃**：`unexpected memory mapping` 随机出现 ——
+   `setarch -R` 禁 ASLR 规避（CI 已加）。
+3. **GCC 13 的 `-Wtsan` 告警**：libstdc++ 的 `atomic_thread_fence` 不被 TSan 建模，
+   asio 头触发 ⇒ wsl-tsan preset 瘦身（关掉 sim/mqtt/driver，TSan 只跑纯逻辑测试，
+   与 asan job 同一哲学）+ `-Wno-tsan`。
 
 ### 三个实测撞出来的坑（都是真 bug，不是配置问题）
 

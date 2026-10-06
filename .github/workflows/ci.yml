@@ -62,3 +62,26 @@ jobs:
 
       - name: 纯逻辑测试（ASan/UBSan 零告警）
         run: ctest --preset wsl-asan -R "gw_tests"
+
+  # ── ThreadSanitizer：多线程服务（W3-2 边界队列 / 服务壳 / Paho 回调槽）的竞态检查 ──
+  # 同 ASan 的理由：只跑纯逻辑测试，第三方网络库（asio/Paho）不进 TSan 射程。
+  tsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装工具链
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ git libgtest-dev libsqlite3-dev
+
+      - name: 配置（TSan）
+        run: cmake --preset wsl-tsan
+
+      - name: 构建
+        run: cmake --build --preset wsl-tsan -j"$(nproc)"
+
+      - name: 多线程测试（TSan 零竞态）
+        # setarch -R：新内核（vm.mmap_rnd_bits=32）与 TSan 影子映射冲突，
+        # 随机触发 "unexpected memory mapping" 启动崩溃 —— 禁 ASLR 规避（实测）
+        run: setarch $(uname -m) -R ctest --preset wsl-tsan -R "gw_tests"

@@ -16,6 +16,7 @@
 | D3 Quick Start | 整条链路 REST 化脚本 | ✅ 实测（2026-10-06 真环境跑通：南向采值、北向 MQTT 每秒一条、订阅 `#` 收到报文） |
 | D7 | 建仓 + 首次提交 + 打里程碑 tag | ✅ 完成（`3e40760`，tag `v0.1.0`，63 文件 / 9846 行） |
 | W3-1 | SQLite 环形缓存：IRecordStore 接口抽取 + 持久化实现（WAL + seq 水位线）+ 重启续传验收 | ✅ 实测（2026-10-07：WSL 93/93 用例含 SqliteStore 5 项，验收场景跨重启对账丢失 0/重复 0；Windows 88/88 垫片路径无回归） |
+| W3-2 | 多线程服务壳：BoundedQueue + EdgeProxyService（采集→管道 actor 模型，内核单线程独占） | ✅ 实测（2026-10-07：**TSan 101/101 零竞态**，WSL Release 101/101、Windows 96/96；CI 新增 tsan job） |
 
 ## 二、可直接引用的实测数字
 
@@ -23,7 +24,7 @@
 
 | 项 | 数字 |
 | -- | -- |
-| 单元测试 | **88 用例（Windows 垫片）/ 93 用例（WSL 真框架，含 SqliteStore 5 项）** 全通过 |
+| 单元测试 | **96 用例（Windows 垫片）/ 101 用例（WSL 真框架，含 SqliteStore 5 + BoundedQueue 4 + ProxyService 4）** 全通过；**TSan 零竞态**（wsl-tsan，101/101） |
 | 双编译器 | g++ 16.2.0 与 clang++(LLVM-MinGW) **断言数完全相同** |
 | ctest | **8 个用例、全过、约 19 秒** |
 | 编译告警 | `-Wall -Wextra -Wpedantic -Wshadow -Werror` **零告警** |
@@ -138,7 +139,7 @@ g++ / clang++、Windows(MinGW) / Linux(GCC 13)、`-O0` / `-O2`。
 
 | 项 | 原因 | 下一步 |
 | -- | -- | -- |
-| TSan 零竞态 | 目前是单线程，跑了没意义 | 边缘代理上多线程后再跑（W3-2） |
+| ~~TSan 零竞态~~ | ✅ **已达成**（2026-10-07）：EdgeProxyService 上线后 wsl-tsan 101/101 零警告；附赠 TSan 实战经验（测试装置竞态 / 新内核 ASLR 崩溃 / GCC13 -Wtsan），见 README W3-2 节 |
 | 规则引擎（阈值/变化率 + JSON 配置） | W3-3 未开始 | 表驱动单测 + 确定性重放 |
 | 压测报告（图表） | 依赖压测矩阵跑完 | W5（R9 改造后 100ms 档位已可达，矩阵可全量跑） |
 

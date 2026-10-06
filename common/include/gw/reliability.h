@@ -1,6 +1,7 @@
 #ifndef GW_RELIABILITY_H
 #define GW_RELIABILITY_H
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -57,6 +58,18 @@ class IClock {
 public:
     virtual ~IClock() = default;
     virtual std::uint64_t now_ms() const = 0;
+};
+
+// 真实时钟实现：测试用注入时钟（SimClock/FakeClock），服务化（W3-2）用这个。
+// steady_clock：不受系统时间跳变影响，退避/续传的时间线只认单调流逝。
+class SteadyClock final : public IClock {
+public:
+    std::uint64_t now_ms() const override {
+        return static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+    }
 };
 
 // 发送结果。Ok = 对端已确认（相当于 MQTT QoS1 的 PUBACK）；
