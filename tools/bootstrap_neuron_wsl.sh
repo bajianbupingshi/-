@@ -170,6 +170,9 @@ cmake -B "${BUILD_DIR}" -S "${NEURON_DIR}" -G Ninja \
     -DCMAKE_CXX_FLAGS="${OPT_FLAGS}" \
     -DCMAKE_SHARED_LINKER_FLAGS="${EXTRA_LINK_FLAGS}" \
     -DCMAKE_EXE_LINKER_FLAGS="${EXTRA_LINK_FLAGS}" || { bad "cmake 配置失败"; exit 1; }
+    # 兜底：Neuron 的 CMakeLists 会覆盖 CMAKE_EXE_LINKER_FLAGS（实测踩过），
+    # 所以再用 C_STANDARD_LIBRARIES 把 -lz -llzma 追加到每个链接命令末尾。
+    -DCMAKE_C_STANDARD_LIBRARIES="-lz -llzma" \
 
 # 自证：优化级别必须真的进了命令行，否则后面所有性能数字都不可信
 if grep -q -- "${OPT_FLAGS}" "${BUILD_DIR}/compile_commands.json" 2>/dev/null; then
@@ -277,9 +280,15 @@ else
         #   写成 password 会让 neu_json_decode_login_req 解码失败，
         #   被 NEU_PROCESS_HTTP_REQUEST 宏回成 {"error": 1002} = BODY_IS_WRONG，
         #   很容易误判成"密码不对"。
-        resp="$(curl -s --max-time 5 -X POST http://127.0.0.1:7000/api/v2/login \
-                -H 'Content-Type: application/json' \
-                -d '{"name":"admin","pass":"0000"}')"
+        # 端口开了 != REST 完全就绪（实测踩过：首次登录 1002，重试就好）
+        resp=""
+        for _attempt in 1 2 3 4 5; do
+            resp="$(curl -s --max-time 5 -X POST http://127.0.0.1:7000/api/v2/login \
+                    -H 'Content-Type: application/json' \
+                    -d '{"name":"admin","pass":"0000"}')"
+            printf '%s' "$resp" | grep -q '"token"' && break
+            sleep 2
+        done
         if printf '%s' "$resp" | grep -q '"token"'; then
             ok "REST 登录成功（拿到 token）"
         else
