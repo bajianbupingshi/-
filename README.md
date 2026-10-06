@@ -1,8 +1,8 @@
 # 工业物联网关 · 自研协议层（W1 交付）
 
 > 本目录是《工业物联网关落地方案》的代码落地部分。
-> **当前进度：W1 D4–D6 完成** —— 工程骨架 + 协议一页定稿 + 协议层（CRC16 / 帧编解码 / 显式状态机）+ 寄存器表与确定性注入 + 表驱动单测。
-> **尚未开始**：asio 设备模拟器（需 asio 头）、Neuron 驱动插件（需 SDK）、边缘数据代理（W2–W3）。
+> **当前进度：W2 全部完成（D7 已建仓，tag `v0.1.0`）** —— 协议层（CRC16 / 帧编解码 / 显式状态机）+ 设备模拟器（asio）+ 边缘代理可靠性内核 + 真实 MQTT 传输（Paho）+ Neuron 驱动插件（SDK 垫片路线）全部实测；WSL 真环境 Quick Start 链路已跑通。
+> **尚未开始**：W3 边缘数据代理服务化（规则引擎 / SQLite 环形缓存 / 多线程 TSan）、Paho Async API 改造（R9 待决策）、压测矩阵与实验报告、面板与 QEMU aarch64。
 
 ## 目录
 
@@ -357,7 +357,7 @@ gw_sim --port 15020 & driver_check --lib <…> --device-port 15020   #  30 check
   从算法上就与 libm 无关。
 - 演示里的重放哈希用的是「正弦 + 随机游走」混合流。早期版本只挂正弦 —— 而正弦无状态、
   不消耗 RNG，导致「换 seed 字节流不变」却在最初被判为通过；已修（混入一个随机游走点位）。
-- `plugins/` 目前为空目录占位，W2 才开始。
+- 插件本体已走「假 Neuron」垫片路线实测（22/22，完整链路 30/30）；**真 SDK 构建 + 真 Neuron 加载联调尚未做**（需 WSL，命令见 `plugins/README.md`）。
 - Windows 本机：llvm-mingw 的 libc++ 与本机 asio 组合，运行期 `std::thread` 会抛 `system_error`
   （已用最小程序隔离确认是工具链交互问题，非本项目代码）。故本机 `gw_sim --selftest`
   只由 g++ 运行；WSL/Linux 不受此限。详见 `apps/README.md`。

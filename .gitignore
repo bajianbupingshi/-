@@ -14,6 +14,9 @@ compile_commands.json
 # 构建与自检日志（build_host.sh / bootstrap_wsl.sh 的产物）
 *.log
 
+# Python 工具（tools/check_sdk_shim.py）的字节码缓存
+__pycache__/
+
 # 编辑器 / 系统
 .vscode/
 .idea/

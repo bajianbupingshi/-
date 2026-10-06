@@ -87,10 +87,6 @@ public:
     void reset();
 
 private:
-    // 尝试从游标处解析一帧；成功返回 true 并推进游标
-    // 失败时写入 err 并返回 false（调用方负责按重同步规则推进）
-    bool try_decode(std::size_t& frame_len, ParseErrorCode& err) const;
-
     void compact();
 
     std::vector<std::uint8_t> buf_;
