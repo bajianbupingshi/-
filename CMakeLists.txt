@@ -71,8 +71,16 @@ if(GW_BUILD_PROXY)
 endif()
 
 if(GW_BUILD_SIM)
-  add_subdirectory(client)
   add_subdirectory(apps/sim)
+endif()
+
+# gw_client：模拟器与驱动插件**共用**的协议客户端 —— 任一目标开启都要建。
+# ★ P0-3 真头联调实测的坑：它曾只挂在 GW_BUILD_SIM 之下，于是「只开
+#   GW_BUILD_DRIVER（真 Neuron 的构建场景）」时 gw_client 目标不存在，
+#   CMake 把链接名静默降级成 -lgw_client —— 传递 include 全部丢失，
+#   表现为 driver_impl.cpp 找不到 gw/client.h。别把它重新塞回 SIM 的 gate 里。
+if(GW_BUILD_SIM OR GW_BUILD_DRIVER)
+  add_subdirectory(client)
 endif()
 
 option(GW_BUILD_DRIVER "构建 Neuron 驱动插件（自研件②）" OFF)

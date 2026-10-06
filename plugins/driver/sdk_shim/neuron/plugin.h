@@ -11,11 +11,12 @@
  *     （plugin.h / tag.h），包括那个关键的 `union { struct {...} driver; }`。
  *     这是本垫片要保真的核心。
  *   · neu_plugin_common_t / adapter_callbacks_t / neu_dvalue_t / neu_value_u ——
- *     真实结构体字段更多，这里只保留我们用到的。**保真的是「字段名与签名」**：
- *     插件里一律按名字访问（plugin->common.adapter_callbacks->update(...)），
- *     因此垫片与真 SDK 都能编过。
- *   · UT_array —— 真实是 uthash 的 utarray；这里提供同名宏 utarray_len/utarray_eltptr，
- *     保真的同样是「用法」层面。
+ *     真实结构体字段更多，这里只保留我们用到的。**保真的是「字段名、签名与嵌套形状」**：
+ *     插件里一律按名字访问（plugin->common.adapter_callbacks->driver.update(...)），
+ *     因此垫片与真 SDK 都能编过（update / write_response 藏在 union 的
+ *     driver 子结构里 —— 这个形状差异是真头联调时踩出来的，见 README）。
+ *   · UT_array —— 逐字对齐 uthash 2.3.0（d / icd.sz / i / n），连内部布局一起保真，
+ *     手工构造数组的测试代码才不必为两条路线写两份。
  *
  * 用法：-DGW_NEURON_SDK_DIR=<真 SDK>/include 时走真头文件；否则用本垫片。
  */
@@ -26,17 +27,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* ── 1. define.h 的长度常量与版本（与真实一致）────────────────────────────── */
-#define NEU_NODE_NAME_LEN 64
-#define NEU_GROUP_NAME_LEN 64
+/* ── 1. define.h 的长度常量与版本（逐字对齐本地 main-daily 真头，
+      P0-3 联调时由 tools/check_sdk_shim.py 抓出 6 处漂移后修正）────────────── */
+#define NEU_NODE_NAME_LEN 128
+#define NEU_GROUP_NAME_LEN 128
 #define NEU_TAG_NAME_LEN 128
-#define NEU_TAG_META_LENGTH 16
-#define NEU_TAG_FORMAT_LENGTH 32
+#define NEU_TAG_META_LENGTH 20
+#define NEU_TAG_FORMAT_LENGTH 16
 #define NEU_VERSION_MAJOR 2
-#define NEU_VERSION_MINOR 16
+#define NEU_VERSION_MINOR 15
 #define NEU_VERSION_FIX 0
 #define NEU_VERSION(major, minor, fix) ((major) << 16 | (minor) << 8 | (fix))
-#define NEURON_PLUGIN_VER_1_0 NEU_VERSION(2, 16, 0)
+#define NEURON_PLUGIN_VER_1_0 NEU_VERSION(2, 15, 0)
 
 /* ── 2. 不透明类型与前置 typedef ─────────────────────────────────────────── */
 typedef struct neu_adapter      neu_adapter_t;
@@ -46,9 +48,11 @@ typedef struct neu_plugin       neu_plugin_t;
 typedef struct neu_plugin_group neu_plugin_group_t;
 typedef struct adapter_callbacks adapter_callbacks_t;
 
-/* ── 3. 枚举（值取自真实 type.h / tag.h / define.h）───────────────────────── */
+/* ── 3. 枚举（值取自真实 type.h / tag.h / define.h。
+      注意：main-daily 的 type 枚举已把 ERROR 挪到 15（前面 1~14 是
+      INT8..BYTES），不再是旧版的 0 —— P0-3 漂移复核抓出来的）────────────── */
 typedef enum {
-    NEU_TYPE_ERROR  = 0,
+    NEU_TYPE_ERROR  = 15,
     NEU_TYPE_INT8   = 1,
     NEU_TYPE_UINT8  = 2,
     NEU_TYPE_INT16  = 3,
@@ -130,17 +134,29 @@ typedef union neu_value {
     uint8_t  bytes[8];
 } neu_value_u;
 
-/* 真实 neu_dvalue_t 字段更多（含 type/精度等）；这里保留 .value */
+/* 逐字对齐真实 neu_dvalue_t（type.h）—— P0-3 联调发现插件必须显式给
+   dv.type（真 Neuron 按它解释载荷），垫片结构里没有 type 就编不过 */
 typedef struct {
+    neu_type_e  type;
     neu_value_u value;
+    uint8_t     precision;
 } neu_dvalue_t;
 
 struct adapter_callbacks {
-    /* 真实结构体更长（update_with_trace / update_im / ...），我们只用这两个。
-       保真的是**字段名与签名**（从左到右抄自真实 adapter.h）。 */
-    void (*update)(neu_adapter_t *adapter, const char *group, const char *tag,
-                   neu_dvalue_t value);
-    void (*write_response)(neu_adapter_t *adapter, void *req, int error);
+    /* 真实结构体更长（command / response / responseto / register_metric /
+       update_metric / update_with_trace / update_im / ...）。
+       ★ P0-3 真头联调实测的形状差异：update / write_response 不在顶层，
+       藏在 union { struct {...} driver; } 里 —— 访问必须写
+       ->driver.update / ->driver.write_response（探针验证过，写 ->update
+       直接 "has no member named 'update'"）。这里保真到嵌套形状，
+       字段仍只留用到的两个。 */
+    union {
+        struct {
+            void (*update)(neu_adapter_t *adapter, const char *group, const char *tag,
+                           neu_dvalue_t value);
+            void (*write_response)(neu_adapter_t *adapter, void *req, int error);
+        } driver;
+    };
 };
 
 /* ── 5. 点位（neu_datatag_addr_option_u 与 neu_datatag_t 逐字抄）────────── */
@@ -186,18 +202,29 @@ typedef struct {
     uint8_t                   n_format;
 } neu_datatag_t;
 
-/* ── 6. UT_array（真实是 uthash 的 utarray；保真到"用法"层面）──────────── */
+/* ── 6. UT_array（逐字抄 uthash 2.3.0 的 utarray.h。
+      P0-3 真头联调实测：内部字段名（d / icd.sz / i / n）若与真实不一致，
+      「手工构造数组」的测试代码就会两路漂移 —— 所以连内部布局一起保真，
+      测试代码得以用同一份字段名走垫片与真 SDK 两条路线）────────────── */
+typedef void (ctor_f)(void *dst, const void *src);
+typedef void (dtor_f)(void *elt);
+typedef void (init_f)(void *elt);
 typedef struct {
-    void * data;
-    size_t elem_size;
-    size_t len;
-    size_t cap;
+    size_t  sz;
+    init_f *init;
+    ctor_f *copy;
+    dtor_f *dtor;
+} UT_icd;
+
+typedef struct {
+    unsigned i, n; /* i: index of next available slot, n: num slots */
+    UT_icd   icd;  /* initializer, copy and destructor functions */
+    char    *d;    /* n slots of size icd.sz */
 } UT_array;
 
-#define utarray_len(a) ((unsigned) (((const UT_array *) (a))->len))
-#define utarray_eltptr(a, i)                                                       \
-    ((void *) (((char *) ((const UT_array *) (a))->data) +                         \
-               ((size_t) (i)) * ((const UT_array *) (a))->elem_size))
+#define utarray_len(a) ((a)->i)
+#define utarray_eltptr(a, j) (((j) < (a)->i) ? _utarray_eltptr(a, j) : NULL)
+#define _utarray_eltptr(a, j) ((void *) ((a)->d + ((a)->icd.sz * (j))))
 
 /* ── 7. 插件接口表与模块描述符（逐字抄 plugin.h）────────────────────────── */
 typedef void (*neu_plugin_group_free)(neu_plugin_group_t *pgp);

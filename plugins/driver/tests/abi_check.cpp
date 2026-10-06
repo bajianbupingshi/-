@@ -166,8 +166,10 @@ int main(int argc, char** argv) {
 
     adapter_callbacks_t cbs;
     std::memset(&cbs, 0, sizeof(cbs));
-    cbs.update = on_update;
-    cbs.write_response = on_write_response;
+    // update / write_response 在真 SDK 里藏在 union 的 driver 子结构中
+    //（P0-3 真头联调实测，写 ->update 直接 "has no member named 'update'"）
+    cbs.driver.update = on_update;
+    cbs.driver.write_response = on_write_response;
     plugin->common.adapter = nullptr;   // 假 Neuron：adapter 对本插件不重要
     plugin->common.adapter_callbacks = &cbs;
 
@@ -205,11 +207,13 @@ int main(int argc, char** argv) {
         std::vector<neu_datatag_t> tags(n_tag);
         std::vector<std::string> names = {"t0", "t1", "t2", "t3"};
         std::vector<std::string> addrs = {"1!40001", "1!40002", "1!40003", "1!40004"};
+        // 直接构造 utarray 内部布局（字段名与 uthash 2.3.0 一致，垫片已同形）：
+        // i = 元素数，n = 容量，icd.sz = 单元素大小，d = 数据首地址
         UT_array tags_arr;
-        tags_arr.data = tags.data();
-        tags_arr.elem_size = sizeof(neu_datatag_t);
-        tags_arr.len = n_tag;
-        tags_arr.cap = n_tag;
+        tags_arr.d = reinterpret_cast<char*>(tags.data());
+        tags_arr.icd.sz = sizeof(neu_datatag_t);
+        tags_arr.i = n_tag;
+        tags_arr.n = n_tag;
         for (unsigned i = 0; i < n_tag; ++i) {
             tags[i] = neu_datatag_t{};
             tags[i].name = const_cast<char*>(names[i].c_str());

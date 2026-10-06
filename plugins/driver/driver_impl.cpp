@@ -300,12 +300,15 @@ extern "C" int gw_driver_group_timer(neu_plugin_t* plugin, neu_plugin_group_t* g
 
             // ★ 唯一的对外出口：通过 Neuron 给的回调上报值。
             //   真实驱动的写法就是这一句 —— 所以我们把它的名字与签名抄准了。
+            //   注意 update / write_response 在真 SDK 里藏在 union 的 driver
+            //   子结构中（P0-3 真头联调实测），必须写 ->driver.update。
             if (p->common.adapter_callbacks != nullptr &&
-                p->common.adapter_callbacks->update != nullptr) {
+                p->common.adapter_callbacks->driver.update != nullptr) {
                 neu_dvalue_t dv;
+                dv.type      = NEU_TYPE_UINT16;   // 真 Neuron 按 type 解释载荷，必须显式给
                 dv.value.u16 = vals[0];
-                p->common.adapter_callbacks->update(p->common.adapter, group->group_name,
-                                                    tag->name, dv);
+                p->common.adapter_callbacks->driver.update(p->common.adapter, group->group_name,
+                                                           tag->name, dv);
                 ++st->updates;
                 ++g_updates;
             }
@@ -334,8 +337,8 @@ extern "C" int gw_driver_write_tag(neu_plugin_t* plugin, void* req, neu_datatag_
         }
         // 真实 Neuron 要求通过回调把写结果回执给它（连同它传下来的 req）
         if (p->common.adapter_callbacks != nullptr &&
-            p->common.adapter_callbacks->write_response != nullptr) {
-            p->common.adapter_callbacks->write_response(p->common.adapter, req, err);
+            p->common.adapter_callbacks->driver.write_response != nullptr) {
+            p->common.adapter_callbacks->driver.write_response(p->common.adapter, req, err);
         }
         return err;
     } catch (...) {
