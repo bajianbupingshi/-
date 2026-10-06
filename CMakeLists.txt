@@ -25,6 +25,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# ★ 全库 PIC：GW_BUILD_DRIVER=ON 时 gw_driver 是共享库（.so / .dll），它要链接
+#   静态库 gw_client / gw_common —— 静态库若不带 -fPIC，Linux 上链接 .so 直接报
+#   「relocation R_X86_64_TPOFF32 ... can not be used when making a shared object」。
+#   Windows/MinGW 不报（PE 没有这类重定位限制），所以本机双编译器一直没暴露；
+#   是 WSL 复验（wsl preset 带 GW_BUILD_DRIVER=ON）抓出来的。全局 ON 成本可忽略。
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # ★ enable_testing() 必须在任何 add_test 之前调用。
 #   曾经把它放在 add_subdirectory(apps/...) 之后，导致 apps/ 里注册的
 #   gw_sim_selftest / proxy_demo_scenario 被静默丢弃 —— CI 的 ctest 会少跑三个测试，
