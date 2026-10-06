@@ -74,26 +74,36 @@ driver_check --lib <插件库路径> --device-port 15020     # 30 checks, 0 fail
   （协议支持一次读多个寄存器；合并是明确的下一步优化。）
 - **垫片的保真范围**：核心结构体逐字抄；`neu_plugin_common_t` / `adapter_callbacks_t` /
   `neu_dvalue_t` / `neu_value_u` 只保留用到的字段 ——
-  保真的是**字段名与签名**（插件一律按名字访问，所以垫片与真 SDK 都能编过）。
-  **不要把「垫片过了」当成「真 SDK 一定编得过」**：真 SDK 上仍需处理的差异见下。
+  保真的是**字段名、签名与嵌套形状**（P0-3 真头联调后已把 `union{struct driver}`、
+  UT_array 的 uthash 布局、`neu_dvalue_t.type`、6 处常量全部对齐；实测两条路线
+  同一份源码都编过，22/22 + 30/30 都过）。
+  **「垫片过了」仍不等于「真 SDK 一定编得过」——但差异已压缩到可当场修**：
+  本轮真头联调修掉三处（`->driver.update` 嵌套、UT_array 字段名、`dv.type` 缺失），
+  全部已回写垫片与源码。
 
-## 对真 Neuron 构建（WSL，待执行）
+## 对真 Neuron 构建（WSL，已实测 ✅ 2026-10-06）
 
 ```bash
-# 1) 取 SDK（开源 releases 只发 SDK，不发预编译二进制）
-cd ~/neuron && wget https://github.com/emqx/neuron/releases/download/v2.16-daily/neuron-sdk-2.16.0-amd64.tar.gz
-tar xzf neuron-sdk-2.16.0-amd64.tar.gz && sudo ./neuron-sdk-2.16.0/sdk-install.sh
+# 1) 取 SDK：直接用本地 Neuron 源码树自打包（版本与要加载的 Neuron 天然一致）。
+#    ★ 必须进解压目录跑 sdk-install.sh（脚本用相对路径，在 ~/neuron 里跑会
+#      cp: cannot stat 'neuron-config.cmake' —— 实测踩过）。
+cd ~/neuron && bash package-sdk.sh && tar xzf neuron-sdk-*.tar.gz
+cd neuron-sdk && sudo ./sdk-install.sh
+ls /usr/local/include/neuron/plugin.h        # 自证
 
 # 2) 用真 SDK 头 + 链接 libneuron-base 构建插件
-cmake -B build-plugin -G Ninja -DGW_BUILD_DRIVER=ON \
-      -DGW_NEURON_SDK_DIR=/usr/local/include/neuron \
-      -DGW_ASIO_INCLUDE_DIR=<asio>/include
+#    ★ GW_NEURON_SDK_DIR 给「包含 neuron/ 子目录」的那层（= /usr/local/include）。
+#      sdk-install.sh 的 echo 提示写的是 /usr/local/include/neuron，照抄会拼出
+#      双 neuron/ 编不过（实测）。gw_client 需要 asio，一并给。
+cmake -B build-plugin -G Ninja -DGW_BUILD_DRIVER=ON -DGW_BUILD_SIM=ON \
+      -DGW_NEURON_SDK_DIR=/usr/local/include \
+      -DGW_ASIO_INCLUDE_DIR=/usr/include
 cmake --build build-plugin -j"$(nproc)"
 
-# 3) 把 .so 与 schema 拷到 Neuron 的 plugins 目录并登记
-cp build-plugin/plugins/driver/libgw_driver.so ~/neuron/build/plugins/
-cp ngwp-sim.json ~/neuron/build/plugins/schema/     # schema 文件待补
+# 3) 冒烟：假 Neuron 驱动完整生命周期（22/22）；垫片漂移复核（应全绿）
+./build-plugin/plugins/driver/driver_check --lib build-plugin/plugins/driver/libgw_driver.so
+python3 tools/check_sdk_shim.py --real /usr/local/include/neuron --shim plugins/driver/sdk_shim/neuron
 ```
 
-**尚未做**：`ngwp-sim.json`（settings schema）、`plugins.json` 登记、在真 Neuron 里建节点跑通。
-这需要在 WSL 里执行（我这边 `wsl.exe` 被安全策略拦）。
+**已实测**：真头构建 + dlopen 冒烟 + 完整链路（对 gw_sim 30/30）+ 漂移复核全绿（2026-10-06）。
+`ngwp-sim.json` / `plugins.json` 登记与真 Neuron 建节点联调随后进行。
