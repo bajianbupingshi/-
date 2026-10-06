@@ -29,14 +29,15 @@ fi
 # ninja 的链接步骤要经 cmd.exe（中文 Windows 用 GBK 代码页），
 # 路径里的中文会被打乱，ld 报 "cannot find .../妗岄潰椤圭洰/..."。
 # 编译步骤不经 cmd.exe，所以 -isystem 的中文路径一直是好的 —— 只有链接会中招。
+# ★ 传输层已改 Paho Async（R9）：链接的是 3a（异步）静态库。
 PAHO_ROOT="${PAHO_ROOT:-$HOME/.workbuddy/third_party/paho}"
 MQTT_ARGS=()
-if [ -f "${PAHO_ROOT}/include/MQTTClient.h" ] && [ -f "${PAHO_ROOT}/lib/libpaho-mqtt3c-static.a" ]; then
+if [ -f "${PAHO_ROOT}/include/MQTTAsync.h" ] && [ -f "${PAHO_ROOT}/lib/libpaho-mqtt3a-static.a" ]; then
     MQTT_ARGS=(-DGW_WITH_MQTT=ON
                -DGW_PAHO_INCLUDE_DIR="${PAHO_ROOT}/include"
-               -DGW_PAHO_LIBRARY="${PAHO_ROOT}/lib/libpaho-mqtt3c-static.a")
+               -DGW_PAHO_LIBRARY="${PAHO_ROOT}/lib/libpaho-mqtt3a-static.a")
 else
-    echo "（未发现本地 Paho：${PAHO_ROOT}，本次跳过 mqtt_e2e）"
+    echo "（未发现本地 Paho Async 库：${PAHO_ROOT}，本次跳过 mqtt_e2e）"
 fi
 
 locate_bin() {

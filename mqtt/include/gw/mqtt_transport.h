@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -11,15 +12,20 @@
 namespace gw {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 真实 MQTT 传输（Paho MQTT C 的同步 API）
+// 真实 MQTT 传输（Paho MQTT C 的 Async API + 逐条等 PUBACK）
 //
-// 为什么用 Paho **C** 的同步 API，而不是计划里写的 Paho MQTT C++：
+// 为什么用 Paho **C**，而不是计划里写的 Paho MQTT C++：
 //   ITransport::send() 是**同步**语义（返回 Ok 表示对端已确认）。
-//   Paho C 同步 API 的 MQTTClient_publishMessage + waitForCompletion 天然就是
+//   C 的 Async API（MQTTAsync_sendMessage + waitForCompletion）就是
 //   「发出去 → 等到 PUBACK → 返回」，与 QoS1 一一对应；
-//   而 C++ 包装的 Async 接口要额外引入事件循环 + 条件变量才能做成阻塞式，
+//   而 C++ 包装要额外引入事件循环 + 条件变量才能做成阻塞式，
 //   反而多一层可能出错的机器，还多一个依赖。
-//   ⇒ 已同步更新方案 §4 的技术栈描述。
+//
+// 为什么从同步 API（MQTTClient）换成 Async（R9 的落地改造）：
+//   同步客户端的 waitForCompletion 内部以 100ms 粒度轮询 ⇒ 单条发布 ~116 ms
+//   的硬地板（实测，见 README）。Async 客户端由后台线程在收到 PUBACK 时
+//   条件变量唤醒等待者，同样的阻塞语义、等待精度毫秒级以下。
+//   ⇒ 对外语义不变：Ok 仍然 = PUBACK 已确认；断网续传断言原样保留。
 //
 // 头文件里**不出现任何 Paho 类型**（句柄用 void*），这样 gw_common 保持零依赖，
 // Paho 被隔离在独立的 gw_mqtt target 里。
@@ -70,6 +76,12 @@ struct MqttConfig {
 
 class MqttTransport : public ITransport {
 public:
+    // 单条投递的完成槽：onSuccess/onFailure 回调（Paho 线程）置状态并唤醒
+    // send() 里的条件变量等待（定义在 .cpp）。成员持 shared_ptr 保证「等待
+    // 超时后回调才来」的窗口期里槽对象依然存活（下一条 send 会换新槽）。
+    // 类型必须 public：定义与回调都在 .cpp 的类外。
+    struct DeliverySlot;
+
     explicit MqttTransport(MqttConfig cfg);
     MqttTransport(const MqttTransport&) = delete;
     MqttTransport& operator=(const MqttTransport&) = delete;
@@ -98,7 +110,8 @@ private:
     void teardown();
 
     MqttConfig cfg_;
-    void* handle_ = nullptr;   // MQTTClient（避免在头文件里暴露 Paho 类型）
+    void* handle_ = nullptr;   // MQTTAsync（避免在头文件里暴露 Paho 类型）
+    std::shared_ptr<DeliverySlot> slot_;
     bool connected_ = false;
     bool link_available_ = true;
     std::string last_error_;

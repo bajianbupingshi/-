@@ -1,14 +1,17 @@
-# 真实 MQTT 传输（Paho MQTT C 同步 API）—— 隔离成独立 target，
+# 真实 MQTT 传输（Paho MQTT C **Async** API）—— 隔离成独立 target，
 # 让 gw_common 保持零外部依赖。
 #
 # Paho 的获取方式（二选一）：
-#   ① 本地已有：-DGW_PAHO_INCLUDE_DIR=<paho>/src -DGW_PAHO_LIBRARY=<...>/libpaho-mqtt3c-static.a
-#   ② 系统安装：apt install libpaho-mqtt-dev（Ubuntu 24.04 有），用 find_package 找
+#   ① 本地已有：-DGW_PAHO_INCLUDE_DIR=<paho>/src -DGW_PAHO_LIBRARY=<...>/libpaho-mqtt3a-static.a
+#   ② 系统安装：apt install libpaho-mqtt-dev（Ubuntu 24.04 有，3c 同步 / 3a 异步都含）
+#
+# ★ 必须是 **3a（Async）** 库：传输层 2026-10-06 从 MQTTClient 同步 API 改到
+#   MQTTAsync（R9：同步 waitForCompletion 内部 100ms 轮询是单条 ~116ms 的硬地板）。
 set(GW_PAHO_TARGET "")
 
 if(GW_PAHO_INCLUDE_DIR AND GW_PAHO_LIBRARY)
-    if(NOT EXISTS "${GW_PAHO_INCLUDE_DIR}/MQTTClient.h")
-        message(FATAL_ERROR "GW_PAHO_INCLUDE_DIR 下找不到 MQTTClient.h：${GW_PAHO_INCLUDE_DIR}")
+    if(NOT EXISTS "${GW_PAHO_INCLUDE_DIR}/MQTTAsync.h")
+        message(FATAL_ERROR "GW_PAHO_INCLUDE_DIR 下找不到 MQTTAsync.h：${GW_PAHO_INCLUDE_DIR}")
     endif()
     if(NOT EXISTS "${GW_PAHO_LIBRARY}")
         message(FATAL_ERROR "GW_PAHO_LIBRARY 不存在：${GW_PAHO_LIBRARY}")
@@ -28,8 +31,9 @@ if(GW_PAHO_INCLUDE_DIR AND GW_PAHO_LIBRARY)
     message(STATUS "mqtt: 使用本地 Paho -> ${GW_PAHO_LIBRARY}")
 else()
     find_package(eclipse-paho-mqtt-c CONFIG QUIET)
-    foreach(cand paho-mqtt3c-static paho-mqtt3c eclipse-paho-mqtt-c::paho-mqtt3c-static
-                 eclipse-paho-mqtt-c::paho-mqtt3c)
+    # 异步库优先（3a）；传输层改 Async 后同步库（3c）不再可用
+    foreach(cand paho-mqtt3a-static paho-mqtt3a eclipse-paho-mqtt-c::paho-mqtt3a-static
+                 eclipse-paho-mqtt-c::paho-mqtt3a)
         if(TARGET "${cand}")
             set(GW_PAHO_TARGET "${cand}")
             break()
@@ -37,9 +41,9 @@ else()
     endforeach()
     if(GW_PAHO_TARGET STREQUAL "")
         message(FATAL_ERROR
-            "找不到 Paho MQTT C。二选一：\n"
-            "  ① 本地：-DGW_PAHO_INCLUDE_DIR=<paho>/src -DGW_PAHO_LIBRARY=<paho>/build/src/libpaho-mqtt3c-static.a\n"
-            "  ② 系统：sudo apt install libpaho-mqtt-dev\n"
+            "找不到 Paho MQTT C **Async** 库（paho-mqtt3a）。二选一：\n"
+            "  ① 本地：-DGW_PAHO_INCLUDE_DIR=<paho>/src -DGW_PAHO_LIBRARY=<paho>/build/src/libpaho-mqtt3a-static.a\n"
+            "  ② 系统：sudo apt install libpaho-mqtt-dev（含 libpaho-mqtt3a）\n"
             "     （注意：用 GCC 16 这类默认 C23 的编译器从源码编 Paho 时，\n"
             "       需要 -DCMAKE_C_STANDARD=99 -DCMAKE_C_FLAGS=-std=gnu99，\n"
             "       否则 MQTTPacket.h 里的 typedef bool 与 C23 关键字冲突；\n"

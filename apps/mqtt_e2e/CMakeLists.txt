@@ -31,5 +31,7 @@ add_test(NAME mqtt_e2e_selftest COMMAND mqtt_e2e --selftest)
 set_tests_properties(mqtt_e2e_selftest PROPERTIES TIMEOUT 180)
 
 # 吞吐对比（规模调小以便进 CI；本地要看可信曲线时手动加大 --count）
-add_test(NAME mqtt_e2e_bench COMMAND mqtt_e2e --bench --count 60 --points 30)
+# ★ 样本要够大：异步传输下单条 <1ms，60 点位的小样本会被偶发的建连抖动
+#   翻转 A/B 对比（实测间歇性失败过）—— 600 点位让建连成本摊薄到噪声以下
+add_test(NAME mqtt_e2e_bench COMMAND mqtt_e2e --bench --count 600 --points 30)
 set_tests_properties(mqtt_e2e_bench PROPERTIES TIMEOUT 180)

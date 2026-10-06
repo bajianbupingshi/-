@@ -35,10 +35,13 @@
 #include "gw/reliability.h"
 #include "gw/testing/mini_mqtt_broker.h"
 
-// Paho 只用在这里的订阅侧与信号处理上
+// Paho 只用在这里的订阅侧与信号处理上（发布侧的传输层在 gw/mqtt 里）
 extern "C" {
-#include "MQTTClient.h"
+#include "MQTTAsync.h"
 }
+
+#include <condition_variable>
+#include <mutex>
 
 namespace {
 
@@ -346,26 +349,70 @@ int run_pub(const Options& o) {
 
 // ── 订阅角色（对着真 broker 时充当接收端）───────────────────────────────────
 //
-// 只用 MQTTClient（同步）+ MQTTClient_receive 的收包循环，**不设回调** ——
-// 回调与 receive 混用会导致同一条消息被处理两次、并重复释放 topic 内存。
+// Async API 没有 receive() 式收包循环 —— 消息经 messageArrived 回调投递，
+// 用互斥锁保护地攒进队列，主循环攒一批喂一次对账器。
+// （旧注释里「回调与 receive 混用会重复处理」是同步客户端的坑，纯回调通道不存在该问题。）
+namespace {
+
+struct SubState {
+    std::mutex mtx;
+    std::vector<std::pair<std::string, std::vector<std::uint8_t>>> received;  // topic + payload
+};
+
+int on_message_arrived(void* context, char* topicName, int /*topicLen*/, MQTTAsync_message* m) {
+    auto* st = static_cast<SubState*>(context);
+    if (st != nullptr && m != nullptr) {
+        std::pair<std::string, std::vector<std::uint8_t>> item;
+        item.first = (topicName != nullptr) ? topicName : "";
+        const auto* p = static_cast<const std::uint8_t*>(m->payload);
+        item.second.assign(p, p + static_cast<std::size_t>(m->payloadlen));
+        std::lock_guard<std::mutex> lk(st->mtx);
+        st->received.push_back(std::move(item));
+    }
+    if (m != nullptr) {
+        MQTTAsync_freeMessage(&m);
+    }
+    if (topicName != nullptr) {
+        MQTTAsync_free(topicName);
+    }
+    return 1;
+}
+
+}  // namespace
+
 int run_sub(const Options& o) {
     gw::Ledger ledger;
+    SubState sub_state;
 
     const std::string address = "tcp://" + o.host + ":" + std::to_string(o.port);
-    MQTTClient sub = nullptr;
-    if (MQTTClient_create(&sub, address.c_str(), "gw-verify-sub", MQTTCLIENT_PERSISTENCE_NONE,
-                          nullptr) != MQTTCLIENT_SUCCESS) {
+    MQTTAsync sub = nullptr;
+    if (MQTTAsync_create(&sub, address.c_str(), "gw-verify-sub", MQTTCLIENT_PERSISTENCE_NONE,
+                         nullptr) != MQTTASYNC_SUCCESS) {
         std::printf("创建订阅客户端失败\n");
         return 1;
     }
-    MQTTClient_connectOptions opts = MQTTClient_connectOptions_initializer;
+    MQTTAsync_setCallbacks(sub, &sub_state, nullptr, on_message_arrived, nullptr);
+    MQTTAsync_connectOptions opts = MQTTAsync_connectOptions_initializer;
     opts.keepAliveInterval = 20;
     opts.cleansession = 1;
-    if (MQTTClient_connect(sub, &opts) != MQTTCLIENT_SUCCESS) {
+    if (MQTTAsync_connect(sub, &opts) != MQTTASYNC_SUCCESS) {
         std::printf("连接 %s 失败\n", address.c_str());
         return 1;
     }
-    if (MQTTClient_subscribe(sub, o.topic.c_str(), 0) != MQTTCLIENT_SUCCESS) {
+    // 异步连接：等 CONNACK（本地 broker 亚毫秒级，这里给足墙上时间上限）
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!MQTTAsync_isConnected(sub)) {
+            if (std::chrono::steady_clock::now() > deadline) {
+                std::printf("连接 %s 超时\n", address.c_str());
+                return 1;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    MQTTAsync_responseOptions sresp = MQTTAsync_responseOptions_initializer;
+    if (MQTTAsync_subscribe(sub, o.topic.c_str(), 0, &sresp) != MQTTASYNC_SUCCESS ||
+        MQTTAsync_waitForCompletion(sub, sresp.token, 5000) != MQTTASYNC_SUCCESS) {
         std::printf("订阅 %s 失败\n", o.topic.c_str());
         return 1;
     }
@@ -377,20 +424,17 @@ int run_sub(const Options& o) {
 
     std::uint64_t last = 0;
     for (;;) {
-        char* topic = nullptr;
-        int topic_len = 0;
-        MQTTClient_message* m = nullptr;
-        MQTTClient_receive(sub, &topic, &topic_len, &m, 200);
-        if (m != nullptr) {
+        std::vector<std::pair<std::string, std::vector<std::uint8_t>>> batch;
+        {
+            std::lock_guard<std::mutex> lk(sub_state.mtx);
+            batch.swap(sub_state.received);
+        }
+        for (auto& item : batch) {
+            (void)item.first;   // --sub 模式只对账本项目的 RecordCodec 载荷
             gw::Record rec;
-            if (gw::RecordCodec::decode(static_cast<const std::uint8_t*>(m->payload),
-                                        static_cast<std::size_t>(m->payloadlen), rec)) {
+            if (gw::RecordCodec::decode(item.second.data(), item.second.size(), rec)) {
                 ledger.accept(rec);
             }
-            MQTTClient_freeMessage(&m);
-        }
-        if (topic != nullptr) {
-            MQTTClient_free(topic);
         }
         const std::uint64_t got = ledger.unique_count();
         if (got != last) {
@@ -401,6 +445,7 @@ int run_sub(const Options& o) {
         if (o.expect > 0 && got >= o.expect) {
             break;
         }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 
     const std::uint64_t missing = ledger.missing_against_produced(o.expect);
@@ -418,9 +463,12 @@ int run_sub(const Options& o) {
         check(ledger.points_received() == o.expect_points, "★ 点位合计必须与生产端一致");
     }
 
-    MQTTClient_unsubscribe(sub, o.topic.c_str());
-    MQTTClient_disconnect(sub, 1000);
-    MQTTClient_destroy(&sub);
+    MQTTAsync_responseOptions uresp = MQTTAsync_responseOptions_initializer;
+    MQTTAsync_unsubscribe(sub, o.topic.c_str(), &uresp);
+    MQTTAsync_disconnectOptions dopts = MQTTAsync_disconnectOptions_initializer;
+    dopts.timeout = 1000;
+    MQTTAsync_disconnect(sub, &dopts);
+    MQTTAsync_destroy(&sub);
     std::printf("\nRESULT: %d checks, %d failed\n", g_checks, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
@@ -467,6 +515,13 @@ int run_bench(const Options& o) {
         gw::DataProxy proxy(store, tx, clock, pc);
 
         const std::uint64_t cycles = (total_points + pts_per_msg - 1) / pts_per_msg;
+        // 预热：建连与 Paho 后台线程的一次性启动成本不计入吞吐 —— 否则小样本
+        // 下偶发的 ~110ms 建连抖动会翻转 A/B 对比（实测踩过，ctest 的 bench
+        // 用例曾因此间歇性失败）。
+        if (!tx.connect()) {
+            check(false, "bench 预热连接失败: " + tx.last_error());
+            return Result{};
+        }
         const auto t0 = std::chrono::steady_clock::now();
         for (std::uint64_t c = 0; c < cycles; ++c) {
             for (std::uint64_t p = 0; p < pts_per_msg; ++p) {
@@ -515,8 +570,9 @@ int run_bench(const Options& o) {
                                          static_cast<double>(b.messages)
                                    : 0.0);
     }
-    std::printf("\n  说明：单条发布延迟来自 Paho 同步 API 的内部轮询粒度（约 116ms），"
-                "与网络无关。\n        因此真实网关应「按采样周期打包」，而不是一点位一消息。\n");
+    std::printf("\n  说明：传输层已改 Paho Async + 事件驱动等 PUBACK（R9 改造），"
+                "同步时代的 ~116ms/条 地板已消除。\n        打包仍有价值：消息数更少 ⇒ 队列/网络开销更小，"
+                "吞吐更高（见上方倍数）。\n");
 
     check(b.points == a.points, "两种模式应发送相同点位数（可比性前提）");
     check(b.messages < a.messages, "批量模式的消息数应更少");
@@ -534,22 +590,38 @@ int run_bench(const Options& o) {
 //
 // 为什么单独一个模式：--sub 期望的是本项目的 RecordCodec 载荷；
 // 要验证 Neuron 这类第三方网关的发布，只需把 topic + 原始载荷打出来看。
+// 同样走 Async 回调通道（SubState 攒队列，主循环打印）。
 int run_rawsub(const Options& o) {
+    SubState raw_state;
+
     const std::string address = "tcp://" + o.host + ":" + std::to_string(o.port);
-    MQTTClient sub = nullptr;
-    if (MQTTClient_create(&sub, address.c_str(), "gw-rawsub", MQTTCLIENT_PERSISTENCE_NONE,
-                          nullptr) != MQTTCLIENT_SUCCESS) {
+    MQTTAsync sub = nullptr;
+    if (MQTTAsync_create(&sub, address.c_str(), "gw-rawsub", MQTTCLIENT_PERSISTENCE_NONE,
+                         nullptr) != MQTTASYNC_SUCCESS) {
         std::printf("创建订阅客户端失败\n");
         return 1;
     }
-    MQTTClient_connectOptions opts = MQTTClient_connectOptions_initializer;
+    MQTTAsync_setCallbacks(sub, &raw_state, nullptr, on_message_arrived, nullptr);
+    MQTTAsync_connectOptions opts = MQTTAsync_connectOptions_initializer;
     opts.keepAliveInterval = 20;
     opts.cleansession = 1;
-    if (MQTTClient_connect(sub, &opts) != MQTTCLIENT_SUCCESS) {
+    if (MQTTAsync_connect(sub, &opts) != MQTTASYNC_SUCCESS) {
         std::printf("连接 %s 失败\n", address.c_str());
         return 1;
     }
-    if (MQTTClient_subscribe(sub, o.topic.c_str(), 0) != MQTTCLIENT_SUCCESS) {
+    {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!MQTTAsync_isConnected(sub)) {
+            if (std::chrono::steady_clock::now() > deadline) {
+                std::printf("连接 %s 超时\n", address.c_str());
+                return 1;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    }
+    MQTTAsync_responseOptions sresp = MQTTAsync_responseOptions_initializer;
+    if (MQTTAsync_subscribe(sub, o.topic.c_str(), 0, &sresp) != MQTTASYNC_SUCCESS ||
+        MQTTAsync_waitForCompletion(sub, sresp.token, 5000) != MQTTASYNC_SUCCESS) {
         std::printf("订阅 %s 失败\n", o.topic.c_str());
         return 1;
     }
@@ -561,28 +633,32 @@ int run_rawsub(const Options& o) {
                           std::chrono::seconds(o.outage_sec == 0 ? 15 : o.outage_sec);
     std::uint64_t got = 0;
     while (got < o.count && std::chrono::steady_clock::now() < deadline) {
-        char* topic = nullptr;
-        int topic_len = 0;
-        MQTTClient_message* m = nullptr;
-        MQTTClient_receive(sub, &topic, &topic_len, &m, 200);
-        if (m != nullptr) {
-            ++got;
-            std::string payload(static_cast<const char*>(m->payload),
-                                static_cast<std::size_t>(m->payloadlen));
-            std::printf("  #%llu topic=%s len=%d payload=%.300s\n",
-                        static_cast<unsigned long long>(got), topic != nullptr ? topic : "(null)",
-                        m->payloadlen, payload.c_str());
-            std::fflush(stdout);
-            MQTTClient_freeMessage(&m);
+        std::vector<std::pair<std::string, std::vector<std::uint8_t>>> batch;
+        {
+            std::lock_guard<std::mutex> lk(raw_state.mtx);
+            batch.swap(raw_state.received);
         }
-        if (topic != nullptr) {
-            MQTTClient_free(topic);
+        if (batch.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            continue;
+        }
+        for (auto& item : batch) {
+            ++got;
+            std::string payload(item.second.begin(), item.second.end());
+            std::printf("  #%llu topic=%s len=%zu payload=%.300s\n",
+                        static_cast<unsigned long long>(got),
+                        item.first.empty() ? "(null)" : item.first.c_str(), item.second.size(),
+                        payload.c_str());
+            std::fflush(stdout);
         }
     }
     check(got >= 1, "★ 应至少收到 1 条北向报文");
-    MQTTClient_unsubscribe(sub, o.topic.c_str());
-    MQTTClient_disconnect(sub, 1000);
-    MQTTClient_destroy(&sub);
+    MQTTAsync_responseOptions uresp = MQTTAsync_responseOptions_initializer;
+    MQTTAsync_unsubscribe(sub, o.topic.c_str(), &uresp);
+    MQTTAsync_disconnectOptions dopts = MQTTAsync_disconnectOptions_initializer;
+    dopts.timeout = 1000;
+    MQTTAsync_disconnect(sub, &dopts);
+    MQTTAsync_destroy(&sub);
     std::printf("\nRESULT: %d checks, %d failed\n", g_checks, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
