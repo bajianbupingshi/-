@@ -95,11 +95,17 @@ g++ / clang++、Windows(MinGW) / Linux(GCC 13)、`-O0` / `-O2`。
 | 项 | 值 |
 | -- | -- |
 | 首次提交 | `3e40760` — 63 文件 / 9846 行插入 |
+| 提交链 | `daf0e03` ← `16e85a6` ← `5ea9590` ← `c5891c9` ← `3e40760`（tag `v0.1.0`） |
+| 最新提交 | `daf0e03` — 维护体检后清理：`parser.h` 死声明删除、`.gitignore` 补 `__pycache__`、README 进度口径对齐（**双编译器复验全绿后提交**，21,128 断言与清理前逐位一致） |
 | 里程碑标签 | `v0.1.0`（annotated，指向 `3e40760`） |
 | 分支 | `main` |
-| 仓库体积 | `.git` 253 KB（**无构建产物**：`build*` / `*.o` / `*.log` / `CMakeCache` 全部被忽略） |
+| 仓库体积 | `.git` 约 370 KB（**无构建产物**：`build*` / `*.o` / `*.log` / `CMakeCache` / `__pycache__` 全部被忽略） |
 | 换行 | `.gitattributes` 强制全文 LF —— 否则签出的 `.sh` 在 WSL 上会 `bad interpreter` |
 | 代码构成 | 23 `.cpp` / 13 `.h` / 10 `CMakeLists.txt` / 7 `.sh` / 5 `.md` / 1 `.yml` / 1 `.json` |
+
+> 2026-10-06 维护体检记录：全面复验（双编译器 `-Werror` 零告警、88/88 单测、ctest 8/8
+> —— 补跑了 `GW_BUILD_DRIVER=ON` 配置、插件完整链路 30/30、脚本/CI/HTML 结构核对）全绿后，
+> 才提交上述清理；`tests/gtest_shim.h` 及全部测试源码未动。
 
 推送：
 
