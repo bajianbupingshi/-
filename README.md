@@ -2,8 +2,8 @@
 
 > 本目录是《工业物联网关落地方案》的代码落地部分。
 > **当前进度：W2 全部完成（D7 已建仓，tag `v0.1.0`）** —— 协议层（CRC16 / 帧编解码 / 显式状态机）+ 设备模拟器（asio）+ 边缘代理可靠性内核 + 真实 MQTT 传输（Paho）+ Neuron 驱动插件（SDK 垫片路线）全部实测；WSL 真环境 Quick Start 链路已跑通。
-> **当前进度：W3-2 多线程化完成**（EdgeProxyService 服务壳 + TSan 101/101 零竞态，2026-10-07）；W3-1 环形缓存、R9 Async 改造同日完成（见下文）。
-> **尚未开始**：W3-3 规则引擎（阈值/变化率 + JSON 配置）、压测矩阵与实验报告、面板与 QEMU aarch64。
+> **当前进度：W3-3 规则引擎完成**（阈值/变化率 → 告警 + JSON 配置 + 确定性重放，2026-10-07）；W3-2 多线程化（TSan 零竞态）、W3-1 环形缓存、R9 Async 改造同日完成（见下文）。
+> **尚未开始**：告警的 MQTT 发布与面板展示、压测矩阵与实验报告、QEMU aarch64。
 
 ## 目录
 
@@ -20,6 +20,8 @@ gateway/
   client/                   NGWP 同步客户端（插件与自检共用的设备对话方）
   store/                    **SQLite 持久化记录库**（W3 环形缓存：IRecordStore 的落盘实现，
                             断电续传 + seq 水位线，GW_BUILD_SQLITE=ON 时构建）
+  rules/                    **规则引擎**（W3-3：阈值/变化率 → 告警，JSON 配置加载，
+                            GW_BUILD_RULES=ON 时构建）
   plugins/driver/           **Neuron 驱动插件**（薄 C 描述符 + C++ 逻辑 + SDK 垫片 + 假 Neuron 自检）
   tests/                    表驱动单测 + GoogleTest 兼容垫片
   tools/build_host.sh       本机双编译器自检（含模拟器与 MQTT 端到端）
@@ -389,6 +391,29 @@ produce(点位批) ──► BoundedQueue ──► DataProxy / Store / 控制�
 3. **GCC 13 的 `-Wtsan` 告警**：libstdc++ 的 `atomic_thread_fence` 不被 TSan 建模，
    asio 头触发 ⇒ wsl-tsan preset 瘦身（关掉 sim/mqtt/driver，TSan 只跑纯逻辑测试，
    与 asan job 同一哲学）+ `-Wno-tsan`。
+
+## W3-3 规则引擎：阈值/变化率 → 告警（数据流的消费者）
+
+`rules/`（gw_rules target）消费代理的数据流并产出告警，经 `EdgeProxyService` 的
+**采样观测钩子**挂接：`set_sample_observer(fn)` —— 管道线程每处理完一个点位批
+就以「批次原文 + 处理时刻 now_ms」调用它（管道线程同步执行、start() 前设置，
+`gw_common` 不感知规则，`gw_rules` 不感知服务，接线在应用层）。
+
+| 规则 | 语义 | 防抖设计 |
+| -- | -- | -- |
+| threshold | addr 满足 op/threshold（gt/lt/ge/le/eq/ne） | **迟滞**（解除须回落出阈值∓迟滞带，防贴线抖动）+ **冷却**（两次告警最小间隔，防刷屏）+ 首样本只建基线 |
+| rate | \|Δvalue\|/Δt 超过 max_delta_per_sec | 同款冷却；首样本建基线（无 Δt 无变化率） |
+
+| 点 | 做法 | 为什么 |
+| -- | -- | -- |
+| 配置加载 | `RuleEngine::from_json`（nlohmann/json，FetchContent v3.11.3）；字段级错误信息，未知键忽略 | 方案 §4 选型；坏配置在启动期抛 `std::runtime_error`，不进运行期 |
+| 隔离 | nlohmann 头挡在 .cpp；gw_rules 链 gw_common | gw_common 零依赖纪律 |
+| 确定性 | 引擎无随机、时钟由调用方注入；同一条回放流喂两个新引擎，告警序列逐字段一致 | 「重放是构造保证不是巧合」—— 单测双引擎比对 + 手推告警总数 |
+| TSan | 引擎在管道线程同步求值（无自身线程）；观测钩子的契约「不抛异常、快速返回」 | 组合后 TSan 107/107 仍零警告 |
+
+验收（test_rules.cpp，6 项）：JSON 合法/七类非法输入全拒、阈值迟滞+冷却的
+状态机轨迹逐步断言、变化率斜率判定与冷却、**确定性重放**（双引擎逐字段比对，
+手推 6 条告警）、与 EdgeProxyService 的真实线程集成（阶梯爬升触发告警）。
 
 ### 三个实测撞出来的坑（都是真 bug，不是配置问题）
 

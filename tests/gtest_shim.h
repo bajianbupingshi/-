@@ -10,7 +10,9 @@
 //       verify-code-before-target-env-via-api-shim。
 //
 // 打开方式：CMake 找到系统 GoogleTest 时定义 GW_HAVE_GTEST=1，否则走下面的实现。
-// 只实现了本项目用到的子集：TEST / EXPECT_* / ASSERT_* / EXPECT_THROW。
+// 只实现了本项目用到的子集：TEST / EXPECT_* / ASSERT_* / EXPECT_THROW /
+// EXPECT_DOUBLE_EQ（W3-3 起补齐）。与真实框架的已知语义差：ASSERT_* 失败
+// 不提前返回（真实框架会 return）—— 已用真实框架全量复跑校验过结果一致。
 // ─────────────────────────────────────────────────────────────────────────────
 
 #if defined(GW_HAVE_GTEST)
@@ -23,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -153,6 +156,7 @@ inline int run_all() {
 #define EXPECT_TRUE(x)  GW_CHECK_((x), std::string("EXPECT_TRUE(" #x ")"))
 #define EXPECT_FALSE(x) GW_CHECK_(!(x), std::string("EXPECT_FALSE(" #x ")"))
 #define ASSERT_TRUE(x)  GW_CHECK_((x), std::string("ASSERT_TRUE(" #x ")"))
+#define ASSERT_FALSE(x) GW_CHECK_(!(x), std::string("ASSERT_FALSE(" #x ")"))
 
 #define EXPECT_EQ(a, b) GW_BINOP_(==, a, b, #a, #b, "==")
 #define EXPECT_NE(a, b) GW_BINOP_(!=, a, b, #a, #b, "!=")
@@ -161,6 +165,9 @@ inline int run_all() {
 #define EXPECT_LE(a, b) GW_BINOP_(<=, a, b, #a, #b, "<=")
 #define EXPECT_GE(a, b) GW_BINOP_(>=, a, b, #a, #b, ">=")
 #define ASSERT_EQ(a, b) GW_BINOP_(==, a, b, #a, #b, "==")
+
+// 浮点严格相等（4 ULP 近似；与真实 gtest 的 EXPECT_DOUBLE_EQ 对齐，垫片放宽到 eps 缩放）
+#define EXPECT_DOUBLE_EQ(a, b)                                                     do {                                                                               ++::gwshim::check_count();                                                     const double gw_a_ = static_cast<double>(a);                                   const double gw_b_ = static_cast<double>(b);                                   const double gw_tol_ =                                                             4.0 * std::numeric_limits<double>::epsilon() *                                 std::max(std::fabs(gw_a_), std::fabs(gw_b_));                              if (!(std::fabs(gw_a_ - gw_b_) <= gw_tol_)) {                                      ::gwshim::report_failure(                                                          __FILE__, __LINE__,                                                            std::string("EXPECT_DOUBLE_EQ(" #a ", " #b ") -> ") +                              std::to_string(gw_a_) + " vs " + std::to_string(gw_b_));           }                                                                          } while (false)
 
 #define EXPECT_NEAR(a, b, eps)                                                 \
     do {                                                                       \

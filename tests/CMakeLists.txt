@@ -16,10 +16,18 @@ if(TARGET gw_store_sqlite)
     list(APPEND GW_TEST_SOURCES test_sqlite_store.cpp)
 endif()
 
+# 规则引擎（GW_BUILD_RULES=ON 时才存在）
+if(TARGET gw_rules)
+    list(APPEND GW_TEST_SOURCES test_rules.cpp)
+endif()
+
 add_executable(gw_tests ${GW_TEST_SOURCES})
 target_link_libraries(gw_tests PRIVATE gw_common)
 if(TARGET gw_store_sqlite)
     target_link_libraries(gw_tests PRIVATE gw_store_sqlite)
+endif()
+if(TARGET gw_rules)
+    target_link_libraries(gw_tests PRIVATE gw_rules)
 endif()
 target_include_directories(gw_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 

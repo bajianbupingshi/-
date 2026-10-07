@@ -3,10 +3,13 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "gw/bounded_queue.h"
@@ -51,6 +54,17 @@ public:
     // 返回 false = 队列满（已计 queued_dropped）或服务已停。
     bool produce(std::vector<Point>&& points);
 
+    // 采样观测钩子（可选，W3-3 规则引擎经它消费数据流）：管道线程每处理完
+    // 一个点位批就调用一次 —— 参数是批次原文 + 处理时刻 now_ms。在管道线程上
+    // **同步执行**，必须快速返回、不得抛异常；必须在 start() 之前设置。
+    using SampleObserver = std::function<void(const std::vector<Point>&, std::uint64_t now_ms)>;
+    void set_sample_observer(SampleObserver obs) {
+        if (running_.load(std::memory_order_relaxed)) {
+            throw std::logic_error("set_sample_observer 必须在 start() 之前调用");
+        }
+        observer_ = std::move(obs);
+    }
+
     // 观测（多线程安全：管道线程每拍镜像快照）
     LinkState state() const noexcept { return static_cast<LinkState>(state_mirror_.load(std::memory_order_relaxed)); }
     LinkStats stats() const;
@@ -80,6 +94,7 @@ private:
     mutable std::mutex obs_mtx_;
     LinkStats stats_{};
     std::string last_error_;
+    SampleObserver observer_;   // start() 前设置；管道线程读取
 };
 
 }  // namespace gw

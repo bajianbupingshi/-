@@ -91,6 +91,12 @@ if(GW_BUILD_SQLITE)
   add_subdirectory(store)
 endif()
 
+# 规则引擎（W3-3）：阈值/变化率 → 告警。FetchContent 拉取 nlohmann/json（需网络）。
+option(GW_BUILD_RULES "构建规则引擎（W3-3，FetchContent nlohmann/json）" OFF)
+if(GW_BUILD_RULES)
+  add_subdirectory(rules)
+endif()
+
 option(GW_BUILD_DRIVER "构建 Neuron 驱动插件（自研件②）" OFF)
 
 if(GW_BUILD_DRIVER)

@@ -56,27 +56,31 @@ void EdgeProxyService::pipeline_loop() {
         // 等新批（至多一个节拍）—— 无数据也要醒，驱动退避/过期/排空
         BoundedQueue<std::vector<Point>>::PopResult r =
             queue_.wait_pop(batch, std::chrono::milliseconds(tick_ms_));
+        bool have_batch = false;
         if (r == BoundedQueue<std::vector<Point>>::PopResult::Ok) {
-            for (const Point& p : batch) {
-                proxy_.add_point(p.addr, p.value);
-            }
-            proxy_.end_cycle();   // 一批 = 一条消息；seq 在此分配（note_seq 落水位线）
+            have_batch = true;
         } else if (r == BoundedQueue<std::vector<Point>>::PopResult::Closed) {
             // 排空剩余批次后退出（优雅停止不丢已收的）
-            for (;;) {
-                const auto last = queue_.try_pop(batch);
-                if (last != BoundedQueue<std::vector<Point>>::PopResult::Ok) {
-                    break;
-                }
+            have_batch = queue_.try_pop(batch) ==
+                         BoundedQueue<std::vector<Point>>::PopResult::Ok;
+            if (!have_batch) {
+                break;
+            }
+        }
+
+        // 内核与观测钩子全程 try 包裹：SQLite 损坏这类故障停管道、观测面可见，
+        // 不静默吞；观测钩子按契约不得抛，这里兜底是纵深防御
+        try {
+            if (have_batch) {
                 for (const Point& p : batch) {
                     proxy_.add_point(p.addr, p.value);
                 }
-                proxy_.end_cycle();
+                // 一批 = 一条消息；seq 在此分配（note_seq 落水位线）
+                if (proxy_.end_cycle() > 0 && observer_) {
+                    observer_(batch, steady_clock_.now_ms());
+                }
             }
-            break;
-        }
-        // Empty / 处理完一批：都要驱动一次内核 tick（真实时钟：退避/续传的时间线）
-        try {
+            // Empty / 处理完一批：都要驱动一次内核 tick（退避/过期/排空的时间线）
             proxy_.tick();
         } catch (const std::exception& e) {
             std::lock_guard<std::mutex> lk(obs_mtx_);
