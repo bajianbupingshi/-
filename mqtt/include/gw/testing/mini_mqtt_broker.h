@@ -147,16 +147,21 @@ public:
     void on_publish(const std::string& topic, const std::uint8_t* payload, std::size_t len) {
         ++publishes_;
         last_topic_ = topic;
+        // broker 的本分是**路由一切**载荷 —— 不能只投递本项目的二进制数据格式。
+        // （W4-1 告警发布实测踩到：JSON 告警在 decode 失败处被丢弃，订阅端
+        //   永远收不到。broker 只对「数据」对账，非数据载荷计数即可。）
         Record rec;
-        if (!RecordCodec::decode(payload, len, rec)) {
+        const bool is_data = RecordCodec::decode(payload, len, rec);
+        if (!is_data) {
             ++bad_payloads_;
-            return;
         }
-        if (ledger_.has(rec.seq)) {
-            ++duplicate_publishes_;
-        }
-        ledger_.accept(rec);
         deliver(topic, payload, len);
+        if (is_data) {
+            if (ledger_.has(rec.seq)) {
+                ++duplicate_publishes_;
+            }
+            ledger_.accept(rec);
+        }
     }
 
     void register_session(const std::shared_ptr<MiniMqttBrokerSession>& s) {

@@ -30,10 +30,9 @@ if(GW_PAHO_INCLUDE_DIR AND GW_PAHO_LIBRARY)
     set(GW_PAHO_TARGET gw_paho)
     message(STATUS "mqtt: 使用本地 Paho -> ${GW_PAHO_LIBRARY}")
 else()
-    find_package(eclipse-paho-mqtt-c CONFIG QUIET)
-    # 异步库优先（3a）；传输层改 Async 后同步库（3c）不再可用
-    foreach(cand paho-mqtt3a-static paho-mqtt3a eclipse-paho-mqtt-c::paho-mqtt3a-static
-                 eclipse-paho-mqtt-c::paho-mqtt3a)
+    # 无本地路径 ⇒ 用根 CMakeLists 已 FetchContent 的 v1.3.14 目标
+    # （见根文件的 addSocket bug 注释；apt 的 1.3.13 同病不用）
+    foreach(cand paho-mqtt3a-static paho-mqtt3a)
         if(TARGET "${cand}")
             set(GW_PAHO_TARGET "${cand}")
             break()
@@ -41,15 +40,10 @@ else()
     endforeach()
     if(GW_PAHO_TARGET STREQUAL "")
         message(FATAL_ERROR
-            "找不到 Paho MQTT C **Async** 库（paho-mqtt3a）。二选一：\n"
-            "  ① 本地：-DGW_PAHO_INCLUDE_DIR=<paho>/src -DGW_PAHO_LIBRARY=<paho>/build/src/libpaho-mqtt3a-static.a\n"
-            "  ② 系统：sudo apt install libpaho-mqtt-dev（含 libpaho-mqtt3a）\n"
-            "     （注意：用 GCC 16 这类默认 C23 的编译器从源码编 Paho 时，\n"
-            "       需要 -DCMAKE_C_STANDARD=99 -DCMAKE_C_FLAGS=-std=gnu99，\n"
-            "       否则 MQTTPacket.h 里的 typedef bool 与 C23 关键字冲突；\n"
-            "       若 CMake >= 4 还需 -DCMAKE_POLICY_VERSION_MINIMUM=3.5）")
+            "找不到 paho-mqtt3a 目标 —— 根 CMakeLists 的 FetchContent 未生效？"
+            "（本地路径方案：-DGW_PAHO_INCLUDE_DIR/-DGW_PAHO_LIBRARY）")
     endif()
-    message(STATUS "mqtt: 使用系统 Paho -> ${GW_PAHO_TARGET}")
+    message(STATUS "mqtt: 使用 FetchContent Paho -> ${GW_PAHO_TARGET}")
 endif()
 
 add_library(gw_mqtt STATIC src/mqtt_transport.cpp)
@@ -57,3 +51,20 @@ add_library(gw_mqtt STATIC src/mqtt_transport.cpp)
 # 注意 gw_mqtt 的**头文件**里不含任何 Paho 类型，所以不想碰 Paho 的使用者不受影响。
 target_link_libraries(gw_mqtt PUBLIC gw_common ${GW_PAHO_TARGET})
 target_include_directories(gw_mqtt PUBLIC include)
+
+# ── 告警发布器（W4-1）：规则引擎的告警 → MQTT JSON 主题 ─────────────────────
+# 需要规则引擎（Alert 类型）与 MQTT 同时开启；独立 target：
+#   · Alert 类型经 gw_rules 传递，nlohmann（rules/ 已 FetchContent）负责转义
+#   · Paho 头经 gw_mqtt PUBLIC 传递；不与 MqttTransport 共享客户端/完成槽
+if(TARGET gw_rules AND GW_PAHO_TARGET)
+    add_library(gw_alerts STATIC src/alert_publisher.cpp)
+    target_link_libraries(gw_alerts
+        PUBLIC gw_rules gw_mqtt   # gw_mqtt PUBLIC：让测试/使用者拿到 Paho 头与库
+        PRIVATE nlohmann_json::nlohmann_json)
+    target_include_directories(gw_alerts PUBLIC include)
+    if(NOT WIN32)
+        find_package(Threads REQUIRED)
+        target_link_libraries(gw_alerts PRIVATE Threads::Threads)
+    endif()
+    message(STATUS "alerts: 告警发布器已启用（gw_alerts）")
+endif()

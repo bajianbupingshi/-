@@ -21,6 +21,25 @@ if(TARGET gw_rules)
     list(APPEND GW_TEST_SOURCES test_rules.cpp)
 endif()
 
+# 告警发布端到端（需要规则引擎 + MQTT + asio —— mini broker 是 asio 的）
+# asio 头路径在这里解析；target 级接线挪到 add_executable 之后（目标须先存在）
+set(GW_HAVE_ALERT_TEST OFF)
+if(TARGET gw_alerts)
+    list(APPEND GW_TEST_SOURCES test_alert_publish.cpp)
+    set(GW_HAVE_ALERT_TEST ON)
+    if(GW_ASIO_INCLUDE_DIR)
+        set(GW_ASIO_HEADERS "${GW_ASIO_INCLUDE_DIR}")
+    else()
+        include(FetchContent)
+        FetchContent_Declare(asio
+            GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
+            GIT_TAG        asio-1-30-2
+            GIT_SHALLOW    TRUE)
+        FetchContent_MakeAvailable(asio)
+        set(GW_ASIO_HEADERS "${asio_SOURCE_DIR}/asio/include")
+    endif()
+endif()
+
 add_executable(gw_tests ${GW_TEST_SOURCES})
 target_link_libraries(gw_tests PRIVATE gw_common)
 if(TARGET gw_store_sqlite)
@@ -29,7 +48,20 @@ endif()
 if(TARGET gw_rules)
     target_link_libraries(gw_tests PRIVATE gw_rules)
 endif()
+if(TARGET gw_alerts)
+    target_link_libraries(gw_tests PRIVATE gw_alerts)
+endif()
 target_include_directories(gw_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+if(GW_HAVE_ALERT_TEST)
+    # SYSTEM：asio 的头在 -Wshadow 下有告警（与 apps/sim 同款处理）
+    target_include_directories(gw_tests SYSTEM PRIVATE "${GW_ASIO_HEADERS}")
+    target_compile_definitions(gw_tests PRIVATE ASIO_STANDALONE)
+    if(WIN32)
+        target_compile_definitions(gw_tests PRIVATE _WIN32_WINNT=0x0601)
+        target_link_libraries(gw_tests PRIVATE ws2_32 mswsock)
+    endif()
+endif()
 
 # 优先用系统 GoogleTest；没有就用内置垫片（同一份测试源码，两边都能跑）
 if(TARGET GTest::gtest_main)

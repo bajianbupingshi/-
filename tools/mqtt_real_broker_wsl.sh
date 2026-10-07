@@ -31,15 +31,16 @@ if [ ! -x "${BIN}" ]; then
     cat <<EOF
 找不到可执行文件：${BIN}
 
-先在 WSL 里构建（需要 Paho 与 asio）：
+先在 WSL 里构建（需要 asio；Paho 由 CMake FetchContent 钉 v1.3.14 拉取 ——
+**不要用 apt 的 libpaho-mqtt-dev：1.3.13 有多客户端 connect 挂死的 bug**）：
 
   cd "${ROOT}"
-  sudo apt-get install -y cmake ninja-build g++ libpaho-mqtt-dev git
+  sudo apt-get install -y cmake ninja-build g++ git
   cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug \\
         -DGW_WITH_MQTT=ON -DGW_BUILD_SIM=ON
   cmake --build build-debug -j"\$(nproc)"
 
-（asio 会由 CMake 通过 FetchContent 自动拉取；若网络受限，可用
+（asio 同样由 FetchContent 自动拉取；若网络受限，可用
   -DGW_ASIO_INCLUDE_DIR=<本地 asio>/include 指定。）
 EOF
     exit 1

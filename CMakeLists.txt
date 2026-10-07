@@ -32,6 +32,32 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 #   是 WSL 复验（wsl preset 带 GW_BUILD_DRIVER=ON）抓出来的。全局 ON 成本可忽略。
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# ── Paho MQTT C（MQTT 传输 / W4-1 告警发布）─────────────────────────────────
+# ★ 必须在 add_compile_options(-Wall ... -Werror) **之前** FetchContent：
+#   第三方库不能继承我们的告警矩阵（GCC13 对 paho utf-8.c 有 -Woverflow，
+#   继承 -Werror 会把 paho 自己的构建卡死）。GW_WITH_MQTT=OFF 或给了本地
+#   paho 库路径时跳过（本地库由使用者自行按其规则构建）。
+# ★ 为什么钉 v1.3.14 而不用 apt 的 1.3.13：1.3.13 的 Socket.c 在 connect
+#   EINPROGRESS 后缺 Socket_addSocket —— 同进程第二个 MQTTAsync 客户端永远
+#   等不到 CONNACK（W4-1 告警发布器实测挂死；v1.3.14 diff 补上 addSocket）。
+if(GW_WITH_MQTT AND NOT GW_PAHO_INCLUDE_DIR)
+  include(FetchContent)
+  set(PAHO_BUILD_STATIC ON CACHE BOOL "" FORCE)
+  set(PAHO_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+  set(PAHO_WITH_SSL OFF CACHE BOOL "" FORCE)
+  set(PAHO_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
+  FetchContent_Declare(paho-mqtt-c
+    GIT_REPOSITORY https://github.com/eclipse/paho.mqtt.c.git
+    GIT_TAG        v1.3.14
+    GIT_SHALLOW    TRUE)
+  FetchContent_MakeAvailable(paho-mqtt-c)
+  # 消费者（gw_mqtt / gw_alerts / mqtt_e2e）把 paho 头当 SYSTEM ——
+  # 第三方头的 -Wpedantic 告警（匿名 struct 等）不该卡我们的 -Werror
+  set_property(TARGET paho-mqtt3a-static APPEND PROPERTY
+    INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${paho-mqtt-c_SOURCE_DIR}/src")
+endif()
+
 # ★ enable_testing() 必须在任何 add_test 之前调用。
 #   曾经把它放在 add_subdirectory(apps/...) 之后，导致 apps/ 里注册的
 #   gw_sim_selftest / proxy_demo_scenario 被静默丢弃 —— CI 的 ctest 会少跑三个测试，

@@ -2,8 +2,8 @@
 
 > 本目录是《工业物联网关落地方案》的代码落地部分。
 > **当前进度：W2 全部完成（D7 已建仓，tag `v0.1.0`）** —— 协议层（CRC16 / 帧编解码 / 显式状态机）+ 设备模拟器（asio）+ 边缘代理可靠性内核 + 真实 MQTT 传输（Paho）+ Neuron 驱动插件（SDK 垫片路线）全部实测；WSL 真环境 Quick Start 链路已跑通。
-> **当前进度：W3-3 规则引擎完成**（阈值/变化率 → 告警 + JSON 配置 + 确定性重放，2026-10-07）；W3-2 多线程化（TSan 零竞态）、W3-1 环形缓存、R9 Async 改造同日完成（见下文）。
-> **尚未开始**：告警的 MQTT 发布与面板展示、压测矩阵与实验报告、QEMU aarch64。
+> **当前进度：W4-1 告警发布链路完成**（规则引擎 → MQTT JSON 主题端到端，2026-10-07）；W3 三件（环形缓存/多线程 TSan/规则引擎）与 R9 Async 改造同日完成（见下文）。
+> **尚未开始**：轻量面板（cpp-httplib + ECharts）、压测矩阵与实验报告、QEMU aarch64。
 
 ## 目录
 
@@ -16,7 +16,8 @@ gateway/
   apps/proxy_demo/          断网续传场景复现器（含三条反转断言）
   apps/sim/                 NGWP 设备模拟器（asio，含进程内端到端自检）
   apps/mqtt_e2e/            真实 MQTT 端到端（Paho + 真 broker + 断网续传 + 接收端对账）
-  mqtt/                     真实 MQTT 传输（Paho 隔离在独立 target，gw_common 保持零依赖）
+  mqtt/                     真实 MQTT 传输 + **告警发布器**（Paho 隔离在独立 target，
+                            gw_common 保持零依赖；gw_alerts = 规则引擎告警 → JSON 主题）
   client/                   NGWP 同步客户端（插件与自检共用的设备对话方）
   store/                    **SQLite 持久化记录库**（W3 环形缓存：IRecordStore 的落盘实现，
                             断电续传 + seq 水位线，GW_BUILD_SQLITE=ON 时构建）
@@ -414,6 +415,38 @@ produce(点位批) ──► BoundedQueue ──► DataProxy / Store / 控制�
 验收（test_rules.cpp，6 项）：JSON 合法/七类非法输入全拒、阈值迟滞+冷却的
 状态机轨迹逐步断言、变化率斜率判定与冷却、**确定性重放**（双引擎逐字段比对，
 手推 6 条告警）、与 EdgeProxyService 的真实线程集成（阶梯爬升触发告警）。
+
+## W4-1 告警发布链路：规则引擎 → MQTT JSON 主题（端到端实测）
+
+`mqtt/` 里的 `AlertPublisher`（gw_alerts target，需规则引擎 + MQTT 同时开启）：
+
+| 点 | 做法 | 为什么 |
+| -- | -- | -- |
+| 载荷 | 单行 JSON（nlohmann 生成，键名字典序）：`{"addr","detail","kind","rule","ts_ms","value"}` | 订阅端/面板可直接解析；形状稳定可依赖 |
+| 定位 | **尽力而为的通知**：不入续传队列、链路断开即丢弃并计 failed | 对账口径只覆盖数据记录；规则冷却保证恢复后无告警风暴 |
+| 独立客户端 | 独立 MQTTAsync 连接 / client_id / topic，与数据通道互不影响 | 告警发不出去不拖累数据；回复独立性 |
+| 等 PUBACK | QoS1 + `waitForCompletion`（低频告警不在乎其 100ms 轮询粒度） | 不复用传输层事件驱动完成槽，简单优先 |
+
+端到端实测（test_alert_publish.cpp）：采集线程 produce → 管道线程规则求值 →
+AlertPublisher ──真 TCP/MQTT──► mini broker → 订阅端（MQTTAsync 回调）收到 JSON
+并逐字段断言（rule/kind/addr/ts_ms）。
+
+### 本链路撞出来的四个坑（全部修复并写入提交）
+
+1. **⭐ mini broker 只路由「数据」不路由一切**：`on_publish` 在 RecordCodec 解码
+   失败处直接 return —— JSON 告警被丢弃、订阅端永远收不到。修复：**broker 的本分
+   是路由一切载荷**，非数据载荷只计数（bad_payloads）不参与数据对账。
+2. **⭐ Paho 1.3.13 多客户端 connect 挂死**（上游 bug）：同进程第二个 MQTTAsync
+   客户端的 CONNACK 永远到不了（paho trace 实锤：新 socket 加入 poll 集后从未
+   就绪；v1.3.14 的 Socket.c diff 恰好补 addSocket）。⇒ 本地库升 1.3.14、
+   WSL/CI 改 FetchContent **钉 v1.3.14**（apt 的 1.3.13 同病，弃用）。
+3. **FetchContent 第三方不能继承 `-Werror`**：paho 的 utf-8.c 在 GCC13 有
+   `-Woverflow` ⇒ paho 的 FetchContent 挪到根 CMakeLists 的
+   `add_compile_options` **之前**；其头经 `INTERFACE_SYSTEM_INCLUDE_DIRECTORIES`
+   标记 SYSTEM。
+4. **AlertPublisher 的建连顺序约束**：paho 的多客户端诟病下，发布器须在同进程
+   任何其他 MQTTAsync 客户端之前**先行建连**（生产形态本就如此：长驻服务随启动
+   建连，订阅端后启）。头文件已写明约束；根因未定位到源码级（wip），约束先行。
 
 ### 三个实测撞出来的坑（都是真 bug，不是配置问题）
 
